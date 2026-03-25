@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }}{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Project Detail</p>
+      <h2>{{ project.name }}</h2>
+      <p class="subtle">Health {{ detail.summary.rag_status }} | Confidence {{ detail.summary.milestone_confidence }}</p>
+    </div>
+    <div class="hero-chip">Key {{ project.key }}</div>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Delivery</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Milestone</th>
+              <th>Finish</th>
+              <th>Baseline</th>
+              <th>Prev Var</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for milestone in detail.milestones %}
+              <tr>
+                <td>{{ milestone.name }}</td>
+                <td>{{ milestone.finish_date or "N/A" }}</td>
+                <td>{{ milestone.baseline_finish_date or "N/A" }}</td>
+                <td>{{ milestone.variance_from_previous_days if milestone.variance_from_previous_days is not none else "N/A" }}</td>
+                <td>{{ "Material slip" if milestone.material_slip else "On watch" }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5">No milestone data loaded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h3>Execution</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Critical task</th>
+              <th>Finish</th>
+              <th>% complete</th>
+              <th>Predecessors</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for task in detail.critical_tasks %}
+              <tr>
+                <td>{{ task.name }}</td>
+                <td>{{ task.finish_date or "N/A" }}</td>
+                <td>{{ task.percent_complete }}</td>
+                <td>{{ task.predecessor_refs or "N/A" }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No critical-path task data loaded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Slipped Since Last Refresh</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Previous finish</th>
+              <th>Current finish</th>
+              <th>Slip days</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for task in detail.slipped_tasks %}
+              <tr>
+                <td>{{ task.name }}</td>
+                <td>{{ task.previous_finish_date }}</td>
+                <td>{{ task.finish_date }}</td>
+                <td>{{ task.slip_days }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No prior snapshot comparison available yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h3>Actions</h3>
+      <form id="action-form" class="stack-form" data-project-id="{{ project.id }}">
+        <input name="title" placeholder="Action title" required>
+        <input name="owner" placeholder="Owner" required>
+        <input name="due_date" type="date">
+        <textarea name="notes" placeholder="Notes"></textarea>
+        <button type="submit">Add Action</button>
+      </form>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Owner</th>
+              <th>Due</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for action in detail.actions %}
+              <tr>
+                <td>{{ action.title }}</td>
+                <td>{{ action.owner }}</td>
+                <td>{{ action.due_date or "N/A" }}</td>
+                <td>{{ action.status }}</td>
+                <td>
+                  {% if action.status != "done" %}
+                    <button class="ghost-btn action-complete" data-action-id="{{ action.id }}">Mark Done</button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5">No actions recorded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <script>
+    const actionForm = document.getElementById("action-form");
+    if (actionForm) {
+      actionForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(actionForm);
+        const projectId = actionForm.dataset.projectId;
+        const response = await fetch(`/api/projects/${projectId}/actions`, { method: "POST", body: formData });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert("Failed to create action");
+        }
+      });
+    }
+
+    document.querySelectorAll(".action-complete").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const actionId = button.dataset.actionId;
+        const response = await fetch(`/api/actions/${actionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "done" }),
+        });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert("Failed to update action");
+        }
+      });
+    });
+  </script>
+{% endblock %}

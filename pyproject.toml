@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pm-dashboard"
+version = "0.1.0"
+description = "Local PM dashboard for seven projects with MS Project ingestion"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.135.2",
+  "jinja2>=3.1.4",
+  "python-multipart>=0.0.22",
+  "sqlalchemy>=2.0.48",
+  "uvicorn>=0.42.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9.0.2",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Portfolio Overview{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Portfolio Overview</p>
+      <h2>Scan all seven projects in under two minutes.</h2>
+    </div>
+    <div class="hero-chip">Today {{ today }}</div>
+  </section>
+
+  <section class="card-grid">
+    {% for project in projects %}
+      <article class="card">
+        <div class="card-head">
+          <div>
+            <p class="mini-label">Attention Rank</p>
+            <strong>#{{ project.needs_attention_rank }}</strong>
+          </div>
+          <span class="rag rag-{{ project.rag_status|lower }}">{{ project.rag_status }}</span>
+        </div>
+        <h3><a href="/projects/{{ project.project_id }}">{{ project.project_name }}</a></h3>
+        <dl class="metric-list">
+          <div>
+            <dt>Confidence</dt>
+            <dd>{{ project.milestone_confidence }}</dd>
+          </div>
+          <div>
+            <dt>Next milestone</dt>
+            <dd>{{ project.next_major_milestone or "None" }}</dd>
+          </div>
+          <div>
+            <dt>Days remaining</dt>
+            <dd>{{ project.days_to_next_milestone if project.days_to_next_milestone is not none else "N/A" }}</dd>
+          </div>
+          <div>
+            <dt>Overdue actions</dt>
+            <dd>{{ project.overdue_actions_count }}</dd>
+          </div>
+          <div>
+            <dt>Recent movement</dt>
+            <dd>{{ project.recent_schedule_movement }}</dd>
+          </div>
+          <div>
+            <dt>Stale plan</dt>
+            <dd>{{ "Yes" if project.stale_plan else "No" }}</dd>
+          </div>
+        </dl>
+      </article>
+    {% endfor %}
+  </section>
+{% endblock %}

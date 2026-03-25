@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Imports{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Admin / Refresh</p>
+      <h2>Upload a native MS Project file and refresh the portfolio snapshot.</h2>
+      <p class="subtle">Parser ready: {{ "Yes" if parser_ready else "No" }}</p>
+    </div>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Upload .mpp</h3>
+      <form id="import-form" class="stack-form">
+        <label>
+          Project
+          <select name="project_id" required>
+            {% for project in projects %}
+              <option value="{{ project.id }}">{{ project.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>
+          MS Project file
+          <input name="file" type="file" accept=".mpp" required>
+        </label>
+        <button type="submit">Run Import</button>
+      </form>
+      <p class="helper">Sample file on disk: <code>{{ sample_mpp }}</code></p>
+    </article>
+
+    <article class="panel">
+      <h3>Import History</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Status</th>
+              <th>File</th>
+              <th>Started</th>
+              <th>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in runs %}
+              <tr>
+                <td>{{ run.project_name }}</td>
+                <td>{{ run.status }}</td>
+                <td>{{ run.source_filename }}</td>
+                <td>{{ run.started_at }}</td>
+                <td>{{ run.error_message or "-" }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5">No imports run yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <script>
+    const importForm = document.getElementById("import-form");
+    importForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(importForm);
+      const projectId = formData.get("project_id");
+      const response = await fetch(`/api/imports/mpp?project_id=${projectId}`, {
+        method: "POST",
+        body: formData,
+      });
+      const payload = await response.json();
+      if (response.ok) {
+        window.location.reload();
+      } else {
+        alert(payload.error || "Import failed");
+      }
+    });
+  </script>
+{% endblock %}
