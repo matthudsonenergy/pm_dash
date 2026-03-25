@@ -2,7 +2,18 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from .models import ActionItem, ImportRun, Milestone, Project, ScheduleSnapshot, Task
+from .models import (
+    ActionItem,
+    DecisionItem,
+    ImportRun,
+    Milestone,
+    Project,
+    RiskItem,
+    ScheduleSnapshot,
+    SuggestionItem,
+    Task,
+    WeeklyUpdate,
+)
 
 
 def list_projects(session):
@@ -62,3 +73,66 @@ def list_actions(session, project_id: int, include_closed: bool = True):
     if not include_closed:
         stmt = stmt.where(ActionItem.status != "done")
     return session.scalars(stmt.order_by(ActionItem.due_date, ActionItem.created_at)).all()
+
+
+def get_weekly_update(session, project_id: int, week_start):
+    return session.scalar(
+        select(WeeklyUpdate).where(WeeklyUpdate.project_id == project_id, WeeklyUpdate.week_start == week_start).limit(1)
+    )
+
+
+def list_weekly_updates(session, project_id: int | None = None, limit: int = 12):
+    stmt = select(WeeklyUpdate)
+    if project_id is not None:
+        stmt = stmt.where(WeeklyUpdate.project_id == project_id)
+    return session.scalars(stmt.order_by(WeeklyUpdate.week_start.desc(), WeeklyUpdate.updated_at.desc()).limit(limit)).all()
+
+
+def list_risks(session, project_id: int | None = None, include_closed: bool = True):
+    stmt = select(RiskItem)
+    if project_id is not None:
+        stmt = stmt.where(RiskItem.project_id == project_id)
+    if not include_closed:
+        stmt = stmt.where(RiskItem.status != "closed")
+    return session.scalars(stmt.order_by(RiskItem.updated_at.desc(), RiskItem.id.desc())).all()
+
+
+def list_decisions(session, project_id: int | None = None, include_closed: bool = True):
+    stmt = select(DecisionItem)
+    if project_id is not None:
+        stmt = stmt.where(DecisionItem.project_id == project_id)
+    if not include_closed:
+        stmt = stmt.where(DecisionItem.status.not_in(["done", "closed"]))
+    return session.scalars(stmt.order_by(DecisionItem.due_date, DecisionItem.updated_at.desc())).all()
+
+
+def list_suggestions(
+    session,
+    project_id: int | None = None,
+    weekly_update_id: int | None = None,
+    status: str | None = None,
+):
+    stmt = select(SuggestionItem)
+    if project_id is not None:
+        stmt = stmt.where(SuggestionItem.project_id == project_id)
+    if weekly_update_id is not None:
+        stmt = stmt.where(SuggestionItem.weekly_update_id == weekly_update_id)
+    if status is not None:
+        stmt = stmt.where(SuggestionItem.status == status)
+    return session.scalars(stmt.order_by(SuggestionItem.created_at.desc(), SuggestionItem.id.desc())).all()
+
+
+def get_suggestion(session, suggestion_id: int):
+    return session.get(SuggestionItem, suggestion_id)
+
+
+def get_risk(session, risk_id: int):
+    return session.get(RiskItem, risk_id)
+
+
+def get_decision(session, decision_id: int):
+    return session.get(DecisionItem, decision_id)
+
+
+def get_weekly_update_by_id(session, update_id: int):
+    return session.get(WeeklyUpdate, update_id)

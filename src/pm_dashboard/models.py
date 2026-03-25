@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -28,6 +28,12 @@ class Project(Base):
     )
     actions: Mapped[list["ActionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     import_runs: Mapped[list["ImportRun"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    weekly_updates: Mapped[list["WeeklyUpdate"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
+    risks: Mapped[list["RiskItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    decisions: Mapped[list["DecisionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    suggestions: Mapped[list["SuggestionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
 
 
 class ScheduleSnapshot(Base):
@@ -126,3 +132,91 @@ class ImportRun(Base):
 
     project: Mapped["Project"] = relationship(back_populates="import_runs")
     snapshot: Mapped[Optional["ScheduleSnapshot"]] = relationship(back_populates="import_runs")
+
+
+class WeeklyUpdate(Base):
+    __tablename__ = "weekly_updates"
+    __table_args__ = (UniqueConstraint("project_id", "week_start", name="uq_weekly_updates_project_week"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    week_start: Mapped[date] = mapped_column(Date(), index=True)
+    status_summary: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    blockers: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    approvals_needed: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    follow_ups: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    confidence_note: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    meeting_notes: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    status_notes: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    needs_escalation: Mapped[bool] = mapped_column(Boolean(), default=False)
+    leadership_watch: Mapped[bool] = mapped_column(Boolean(), default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
+
+    project: Mapped["Project"] = relationship(back_populates="weekly_updates")
+    suggestions: Mapped[list["SuggestionItem"]] = relationship(
+        back_populates="weekly_update", cascade="all, delete-orphan"
+    )
+    risks: Mapped[list["RiskItem"]] = relationship(back_populates="weekly_update")
+    decisions: Mapped[list["DecisionItem"]] = relationship(back_populates="weekly_update")
+
+
+class RiskItem(Base):
+    __tablename__ = "risk_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    weekly_update_id: Mapped[Optional[int]] = mapped_column(ForeignKey("weekly_updates.id"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    description: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    category: Mapped[str] = mapped_column(String(60), default="risk")
+    severity: Mapped[str] = mapped_column(String(40), default="medium", index=True)
+    owner: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    due_date: Mapped[Optional[date]] = mapped_column(Date(), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="open", index=True)
+    mitigation: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="manual", index=True)
+    trend: Mapped[str] = mapped_column(String(40), default="steady", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
+
+    project: Mapped["Project"] = relationship(back_populates="risks")
+    weekly_update: Mapped[Optional["WeeklyUpdate"]] = relationship(back_populates="risks")
+
+
+class DecisionItem(Base):
+    __tablename__ = "decision_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    weekly_update_id: Mapped[Optional[int]] = mapped_column(ForeignKey("weekly_updates.id"), nullable=True, index=True)
+    summary: Mapped[str] = mapped_column(String(300))
+    context: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    owner: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    due_date: Mapped[Optional[date]] = mapped_column(Date(), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    impact: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="manual", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
+
+    project: Mapped["Project"] = relationship(back_populates="decisions")
+    weekly_update: Mapped[Optional["WeeklyUpdate"]] = relationship(back_populates="decisions")
+
+
+class SuggestionItem(Base):
+    __tablename__ = "suggestion_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    weekly_update_id: Mapped[Optional[int]] = mapped_column(ForeignKey("weekly_updates.id"), nullable=True, index=True)
+    suggestion_type: Mapped[str] = mapped_column(String(40), index=True)
+    title: Mapped[str] = mapped_column(String(300))
+    proposed_payload: Mapped[str] = mapped_column(Text())
+    rationale: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+
+    project: Mapped["Project"] = relationship(back_populates="suggestions")
+    weekly_update: Mapped[Optional["WeeklyUpdate"]] = relationship(back_populates="suggestions")

@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} Workflow{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Project Workflow</p>
+      <h2>{{ project.name }}</h2>
+      <p class="subtle">Week of {{ workflow.selected_week_start }} | Pending suggestions {{ workflow.pending_suggestions|length }}</p>
+    </div>
+    <div class="hero-actions">
+      <a class="hero-link" href="/projects/{{ project.id }}">Back to detail</a>
+    </div>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Weekly Update</h3>
+      <form id="weekly-update-form" class="stack-form" data-project-id="{{ project.id }}">
+        <input type="date" name="week_start" value="{{ workflow.selected_week_start }}" required>
+        <textarea name="status_summary" placeholder="Status summary">{{ workflow.weekly_update.status_summary if workflow.weekly_update else "" }}</textarea>
+        <textarea name="blockers" placeholder="Blockers, one per line">{{ workflow.weekly_update.blockers if workflow.weekly_update else "" }}</textarea>
+        <textarea name="approvals_needed" placeholder="Approvals needed, one per line">{{ workflow.weekly_update.approvals_needed if workflow.weekly_update else "" }}</textarea>
+        <textarea name="follow_ups" placeholder="Follow-ups, one per line">{{ workflow.weekly_update.follow_ups if workflow.weekly_update else "" }}</textarea>
+        <textarea name="confidence_note" placeholder="Confidence note">{{ workflow.weekly_update.confidence_note if workflow.weekly_update else "" }}</textarea>
+        <textarea name="meeting_notes" placeholder="Meeting notes">{{ workflow.weekly_update.meeting_notes if workflow.weekly_update else "" }}</textarea>
+        <textarea name="status_notes" placeholder="Status notes">{{ workflow.weekly_update.status_notes if workflow.weekly_update else "" }}</textarea>
+        <label class="checkbox-row"><input type="checkbox" name="needs_escalation" {% if workflow.weekly_update and workflow.weekly_update.needs_escalation %}checked{% endif %}> Needs escalation</label>
+        <label class="checkbox-row"><input type="checkbox" name="leadership_watch" {% if workflow.weekly_update and workflow.weekly_update.leadership_watch %}checked{% endif %}> Leadership watch</label>
+        <button type="submit">Save weekly update</button>
+      </form>
+    </article>
+
+    <article class="panel">
+      <h3>Weekly History</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Week</th>
+              <th>Summary</th>
+              <th>Escalation</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in workflow.weekly_update_history %}
+              <tr>
+                <td>{{ item.week_start }}</td>
+                <td>{{ item.status_summary or "No summary" }}</td>
+                <td>{{ "Yes" if item.needs_escalation else "No" }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="3">No weekly updates yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Pending Suggestions</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Title</th>
+              <th>Rationale</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in workflow.pending_suggestions %}
+              <tr>
+                <td>{{ item.suggestion_type }}</td>
+                <td>{{ item.title }}</td>
+                <td>{{ item.rationale }}</td>
+                <td class="action-cell">
+                  <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="accept">Accept</button>
+                  <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="dismiss">Dismiss</button>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No pending suggestions for this week.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h3>Milestone Changes</h3>
+      <ul class="simple-list">
+        {% for item in workflow.milestone_changes %}
+          <li>{{ item }}</li>
+        {% else %}
+          <li>No milestone changes detected from the latest snapshot comparison.</li>
+        {% endfor %}
+      </ul>
+    </article>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Risk Register</h3>
+      <form id="risk-form" class="stack-form" data-project-id="{{ project.id }}">
+        <input name="title" placeholder="Risk title" required>
+        <input name="severity" placeholder="Severity (low/medium/high/critical)" value="medium">
+        <input name="trend" placeholder="Trend (steady/new/worsening/improving)" value="steady">
+        <textarea name="description" placeholder="Description"></textarea>
+        <button type="submit">Add Risk</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Risk</th>
+              <th>Severity</th>
+              <th>Trend</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in workflow.risks %}
+              <tr>
+                <td>{{ item.title }}</td>
+                <td>{{ item.severity }}</td>
+                <td>{{ item.trend }}</td>
+                <td>{{ item.status }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No risks yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h3>Decision Log</h3>
+      <form id="decision-form" class="stack-form" data-project-id="{{ project.id }}">
+        <input name="summary" placeholder="Decision summary" required>
+        <input name="owner" placeholder="Owner">
+        <input type="date" name="due_date">
+        <textarea name="context" placeholder="Context"></textarea>
+        <button type="submit">Add Decision</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Decision</th>
+              <th>Owner</th>
+              <th>Due</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in workflow.decisions %}
+              <tr>
+                <td>{{ item.summary }}</td>
+                <td>{{ item.owner or "N/A" }}</td>
+                <td>{{ item.due_date or "N/A" }}</td>
+                <td>{{ item.status }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No decisions yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <script>
+    const weeklyForm = document.getElementById("weekly-update-form");
+    if (weeklyForm) {
+      weeklyForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const projectId = weeklyForm.dataset.projectId;
+        const formData = new FormData(weeklyForm);
+        const response = await fetch(`/api/projects/${projectId}/weekly-updates`, { method: "POST", body: formData });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert("Failed to save weekly update");
+        }
+      });
+    }
+
+    document.querySelectorAll(".suggestion-action").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const suggestionId = button.dataset.suggestionId;
+        const action = button.dataset.action;
+        const response = await fetch(`/api/suggestions/${suggestionId}/${action}`, { method: "POST" });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert(`Failed to ${action} suggestion`);
+        }
+      });
+    });
+
+    const riskForm = document.getElementById("risk-form");
+    if (riskForm) {
+      riskForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const projectId = riskForm.dataset.projectId;
+        const response = await fetch(`/api/projects/${projectId}/risks`, { method: "POST", body: new FormData(riskForm) });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert("Failed to add risk");
+        }
+      });
+    }
+
+    const decisionForm = document.getElementById("decision-form");
+    if (decisionForm) {
+      decisionForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const projectId = decisionForm.dataset.projectId;
+        const response = await fetch(`/api/projects/${projectId}/decisions`, { method: "POST", body: new FormData(decisionForm) });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert("Failed to add decision");
+        }
+      });
+    }
+  </script>
+{% endblock %}

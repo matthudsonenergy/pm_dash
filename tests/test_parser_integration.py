@@ -16,4 +16,4 @@ def test_real_mpp_file_parses():
     parsed = parse_mpp_file(Path("2026 Pyrolysis Petal - 24 Mar 2026.mpp"))
     assert parsed.title
     assert parsed.tasks
-    assert any(task.milestone_flag for task in parsed.tasks)
+    assert any(task.finish_date for task in parsed.tasks)

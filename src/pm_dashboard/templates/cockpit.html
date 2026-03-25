@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Weekly Cockpit{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Weekly PM Cockpit</p>
+      <h2>Run the week from one working page.</h2>
+      <p class="subtle">{{ cockpit.portfolio_summary }}</p>
+    </div>
+    <form class="inline-filter" method="get" action="/cockpit">
+      <label>
+        Week start
+        <input type="date" name="week_start" value="{{ cockpit.week_start }}">
+      </label>
+      <button type="submit">Refresh</button>
+    </form>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Review Queue</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Type</th>
+              <th>Title</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in cockpit.review_queue %}
+              <tr>
+                <td>{{ item.project_id }}</td>
+                <td>{{ item.suggestion_type }}</td>
+                <td>{{ item.title }}</td>
+                <td>{{ item.status }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No pending suggestions for this week.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h3>Portfolio Signals</h3>
+      <div class="signal-grid">
+        <div><strong>{{ cockpit.actions_due_this_week|length }}</strong><span>Actions due this week</span></div>
+        <div><strong>{{ cockpit.overdue_actions|length }}</strong><span>Overdue actions</span></div>
+        <div><strong>{{ cockpit.decisions_to_force|length }}</strong><span>Decisions to force</span></div>
+        <div><strong>{{ cockpit.risks_watch|length }}</strong><span>Risks on watch</span></div>
+      </div>
+    </article>
+  </section>
+
+  <section class="panel">
+    <h3>Projects This Week</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Update</th>
+            <th>Milestone changes</th>
+            <th>Due actions</th>
+            <th>Decisions</th>
+            <th>Risks</th>
+            <th>Draft summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in cockpit.project_rows %}
+            <tr>
+              <td><a href="/projects/{{ row.project_id }}/workflow?week_start={{ cockpit.week_start }}">{{ row.project_name }}</a></td>
+              <td>{{ "Received" if row.weekly_update else "Missing" }}</td>
+              <td>
+                {% for change in row.milestone_changes %}
+                  <div>{{ change }}</div>
+                {% else %}
+                  <div>No material schedule changes</div>
+                {% endfor %}
+              </td>
+              <td>{{ row.actions_due_this_week|length }} due / {{ row.overdue_actions|length }} overdue</td>
+              <td>{{ row.decisions_to_force|length }}</td>
+              <td>{{ row.risks_watch|length }}</td>
+              <td>{{ row.summary_draft or "No draft yet" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

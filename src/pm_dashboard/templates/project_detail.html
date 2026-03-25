@@ -7,7 +7,10 @@
       <h2>{{ project.name }}</h2>
       <p class="subtle">Health {{ detail.summary.rag_status }} | Confidence {{ detail.summary.milestone_confidence }}</p>
     </div>
-    <div class="hero-chip">Key {{ project.key }}</div>
+    <div class="hero-actions">
+      <div class="hero-chip">Key {{ project.key }}</div>
+      <a class="hero-link" href="/projects/{{ project.id }}/workflow">Open workflow</a>
+    </div>
   </section>
 
   <section class="two-up">
@@ -135,6 +138,64 @@
               </tr>
             {% else %}
               <tr><td colspan="5">No actions recorded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Active Risks</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Risk</th>
+              <th>Severity</th>
+              <th>Trend</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for risk in detail.risks %}
+              <tr>
+                <td>{{ risk.title }}</td>
+                <td>{{ risk.severity }}</td>
+                <td>{{ risk.trend }}</td>
+                <td>{{ risk.status }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No risks recorded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="panel">
+      <h3>Open Decisions</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Decision</th>
+              <th>Owner</th>
+              <th>Due</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for decision in detail.decisions %}
+              <tr>
+                <td>{{ decision.summary }}</td>
+                <td>{{ decision.owner or "N/A" }}</td>
+                <td>{{ decision.due_date or "N/A" }}</td>
+                <td>{{ decision.status }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4">No decisions recorded yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

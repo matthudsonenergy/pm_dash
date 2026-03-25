@@ -42,10 +42,21 @@
             <dd>{{ project.recent_schedule_movement }}</dd>
           </div>
           <div>
+            <dt>Open decisions</dt>
+            <dd>{{ project.open_decisions_count }}</dd>
+          </div>
+          <div>
             <dt>Stale plan</dt>
             <dd>{{ "Yes" if project.stale_plan else "No" }}</dd>
           </div>
         </dl>
+        <div class="tag-row">
+          {% for risk in project.top_risks %}
+            <span class="tag">{{ risk.title }}</span>
+          {% else %}
+            <span class="tag muted-tag">No active top risks</span>
+          {% endfor %}
+        </div>
       </article>
     {% endfor %}
   </section>

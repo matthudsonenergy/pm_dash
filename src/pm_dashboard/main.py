@@ -14,16 +14,40 @@ from .repository import list_projects
 from .seed import ensure_seed_projects
 from .services import (
     ActionCreate,
+    DecisionCreate,
+    RiskCreate,
+    WeeklyUpdateCreate,
+    accept_suggestion,
     attention_queue,
+    cockpit_view,
     create_action,
+    create_decision,
+    create_risk,
+    current_week_start,
+    dismiss_suggestion,
     get_action_or_404,
+    get_decision_or_404,
     get_project_or_404,
+    get_risk_or_404,
+    get_suggestion_or_404,
+    get_weekly_update_or_404,
     import_history,
     import_schedule,
+    parse_date,
     portfolio_view,
     project_detail,
+    project_workflow_view,
     save_upload,
+    serialize_decision,
+    serialize_risk,
+    serialize_suggestion,
+    serialize_weekly_update,
+    truthy,
     update_action_status,
+    update_decision,
+    update_risk,
+    update_weekly_update,
+    upsert_weekly_update,
 )
 
 
@@ -59,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "request": request,
             "today": date.today().isoformat(),
+            "current_week_start": current_week_start().isoformat(),
         }
 
     async def request_data(request: Request) -> dict:
@@ -67,6 +92,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await request.json()
         form = await request.form()
         return dict(form)
+
+    def weekly_update_payload_from_data(data: dict) -> WeeklyUpdateCreate:
+        week_start = parse_date(data.get("week_start")) or current_week_start()
+        return WeeklyUpdateCreate(
+            week_start=week_start,
+            status_summary=data.get("status_summary"),
+            blockers=data.get("blockers"),
+            approvals_needed=data.get("approvals_needed"),
+            follow_ups=data.get("follow_ups"),
+            confidence_note=data.get("confidence_note"),
+            meeting_notes=data.get("meeting_notes"),
+            status_notes=data.get("status_notes"),
+            needs_escalation=truthy(data.get("needs_escalation")),
+            leadership_watch=truthy(data.get("leadership_watch")),
+        )
 
     @app.get("/", response_class=HTMLResponse)
     def portfolio_page(request: Request, session=Depends(get_session)):
@@ -77,6 +117,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {
                 **base_context(request),
                 "projects": projects,
+                "projects_nav": list_projects(session),
+            },
+        )
+
+    @app.get("/cockpit", response_class=HTMLResponse)
+    def cockpit_page(request: Request, session=Depends(get_session)):
+        week_start = parse_date(request.query_params.get("week_start")) or current_week_start()
+        cockpit = cockpit_view(session, settings=app.state.settings, week_start=week_start)
+        return templates.TemplateResponse(
+            request,
+            "cockpit.html",
+            {
+                **base_context(request),
+                "cockpit": cockpit,
                 "projects_nav": list_projects(session),
             },
         )
@@ -92,6 +146,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 **base_context(request),
                 "project": project,
                 "detail": detail,
+                "projects_nav": list_projects(session),
+            },
+        )
+
+    @app.get("/projects/{project_id}/workflow", response_class=HTMLResponse)
+    def project_workflow_page(project_id: int, request: Request, session=Depends(get_session)):
+        project = get_project_or_404(session, project_id)
+        week_start = parse_date(request.query_params.get("week_start")) or current_week_start()
+        workflow = project_workflow_view(session, project, settings=app.state.settings, week_start=week_start)
+        return templates.TemplateResponse(
+            request,
+            "project_workflow.html",
+            {
+                **base_context(request),
+                "project": project,
+                "workflow": workflow,
                 "projects_nav": list_projects(session),
             },
         )
@@ -133,11 +203,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project = get_project_or_404(session, project_id)
         return project_detail(session, project, settings=app.state.settings)
 
+    @app.get("/api/cockpit")
+    def cockpit_api(week_start: str | None = None, session=Depends(get_session)):
+        selected_week = parse_date(week_start) or current_week_start()
+        return cockpit_view(session, settings=app.state.settings, week_start=selected_week)
+
     @app.post("/api/projects/{project_id}/actions")
     async def create_action_api(project_id: int, request: Request, session=Depends(get_session)):
         project = get_project_or_404(session, project_id)
         data = await request_data(request)
-        due_date = date.fromisoformat(data["due_date"]) if data.get("due_date") else None
+        due_date = parse_date(data.get("due_date"))
         action = create_action(
             session,
             project,
@@ -169,6 +244,142 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="status is required")
         action = update_action_status(session, action, status)
         return {"id": action.id, "status": action.status}
+
+    @app.post("/api/projects/{project_id}/weekly-updates")
+    async def create_weekly_update_api(project_id: int, request: Request, session=Depends(get_session)):
+        project = get_project_or_404(session, project_id)
+        data = await request_data(request)
+        weekly_update = upsert_weekly_update(
+            session,
+            project,
+            weekly_update_payload_from_data(data),
+            settings=app.state.settings,
+        )
+        return serialize_weekly_update(weekly_update)
+
+    @app.patch("/api/weekly-updates/{update_id}")
+    async def update_weekly_update_api(update_id: int, request: Request, session=Depends(get_session)):
+        weekly_update = get_weekly_update_or_404(session, update_id)
+        data = await request_data(request)
+        payload = weekly_update_payload_from_data(
+            {
+                "week_start": data.get("week_start") or weekly_update.week_start.isoformat(),
+                "status_summary": data.get("status_summary", weekly_update.status_summary),
+                "blockers": data.get("blockers", weekly_update.blockers),
+                "approvals_needed": data.get("approvals_needed", weekly_update.approvals_needed),
+                "follow_ups": data.get("follow_ups", weekly_update.follow_ups),
+                "confidence_note": data.get("confidence_note", weekly_update.confidence_note),
+                "meeting_notes": data.get("meeting_notes", weekly_update.meeting_notes),
+                "status_notes": data.get("status_notes", weekly_update.status_notes),
+                "needs_escalation": data.get("needs_escalation", weekly_update.needs_escalation),
+                "leadership_watch": data.get("leadership_watch", weekly_update.leadership_watch),
+            }
+        )
+        weekly_update = update_weekly_update(session, weekly_update, payload, settings=app.state.settings)
+        return serialize_weekly_update(weekly_update)
+
+    @app.get("/api/projects/{project_id}/suggestions")
+    def project_suggestions_api(project_id: int, week_start: str | None = None, session=Depends(get_session)):
+        project = get_project_or_404(session, project_id)
+        selected_week = parse_date(week_start) or current_week_start()
+        workflow = project_workflow_view(session, project, settings=app.state.settings, week_start=selected_week)
+        return workflow["suggestions"]
+
+    @app.post("/api/suggestions/{suggestion_id}/accept")
+    async def accept_suggestion_api(suggestion_id: int, request: Request, session=Depends(get_session)):
+        suggestion = get_suggestion_or_404(session, suggestion_id)
+        data = await request_data(request)
+        payload_override = data.get("payload") if isinstance(data.get("payload"), dict) else None
+        suggestion = accept_suggestion(session, suggestion, payload_override=payload_override)
+        return serialize_suggestion(suggestion)
+
+    @app.post("/api/suggestions/{suggestion_id}/dismiss")
+    def dismiss_suggestion_api(suggestion_id: int, session=Depends(get_session)):
+        suggestion = get_suggestion_or_404(session, suggestion_id)
+        suggestion = dismiss_suggestion(session, suggestion)
+        return serialize_suggestion(suggestion)
+
+    @app.post("/api/projects/{project_id}/risks")
+    async def create_risk_api(project_id: int, request: Request, session=Depends(get_session)):
+        project = get_project_or_404(session, project_id)
+        data = await request_data(request)
+        risk = create_risk(
+            session,
+            project,
+            RiskCreate(
+                title=data["title"],
+                description=data.get("description"),
+                category=data.get("category", "risk"),
+                severity=data.get("severity", "medium"),
+                owner=data.get("owner"),
+                due_date=parse_date(data.get("due_date")),
+                status=data.get("status", "open"),
+                mitigation=data.get("mitigation"),
+                source=data.get("source", "manual"),
+                trend=data.get("trend", "steady"),
+            ),
+        )
+        return serialize_risk(risk)
+
+    @app.patch("/api/risks/{risk_id}")
+    async def update_risk_api(risk_id: int, request: Request, session=Depends(get_session)):
+        risk = get_risk_or_404(session, risk_id)
+        data = await request_data(request)
+        risk = update_risk(
+            session,
+            risk,
+            {
+                "title": data.get("title"),
+                "description": data.get("description"),
+                "category": data.get("category"),
+                "severity": data.get("severity"),
+                "owner": data.get("owner"),
+                "due_date": parse_date(data.get("due_date")) if "due_date" in data else risk.due_date,
+                "status": data.get("status"),
+                "mitigation": data.get("mitigation"),
+                "source": data.get("source"),
+                "trend": data.get("trend"),
+            },
+        )
+        return serialize_risk(risk)
+
+    @app.post("/api/projects/{project_id}/decisions")
+    async def create_decision_api(project_id: int, request: Request, session=Depends(get_session)):
+        project = get_project_or_404(session, project_id)
+        data = await request_data(request)
+        decision = create_decision(
+            session,
+            project,
+            DecisionCreate(
+                summary=data["summary"],
+                context=data.get("context"),
+                owner=data.get("owner"),
+                due_date=parse_date(data.get("due_date")),
+                status=data.get("status", "pending"),
+                impact=data.get("impact"),
+                source=data.get("source", "manual"),
+            ),
+        )
+        return serialize_decision(decision)
+
+    @app.patch("/api/decisions/{decision_id}")
+    async def update_decision_api(decision_id: int, request: Request, session=Depends(get_session)):
+        decision = get_decision_or_404(session, decision_id)
+        data = await request_data(request)
+        decision = update_decision(
+            session,
+            decision,
+            {
+                "summary": data.get("summary"),
+                "context": data.get("context"),
+                "owner": data.get("owner"),
+                "due_date": parse_date(data.get("due_date")) if "due_date" in data else decision.due_date,
+                "status": data.get("status"),
+                "impact": data.get("impact"),
+                "source": data.get("source"),
+            },
+        )
+        return serialize_decision(decision)
 
     @app.post("/api/imports/mpp")
     async def import_api(
