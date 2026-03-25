@@ -7,7 +7,7 @@ from .config import get_settings
 from .database import init_db, make_engine, make_session_factory
 from .repository import get_project_by_key
 from .seed import ensure_seed_projects
-from .services import import_schedule
+from .services import ensure_storage, import_schedule
 
 
 def main() -> None:
@@ -17,6 +17,7 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
+    ensure_storage(settings)
     engine = make_engine(settings.db_url)
     session_factory = make_session_factory(engine)
     init_db(engine)

@@ -30,7 +30,7 @@ Local single-user portfolio dashboard for seven projects, built around direct `.
 
 ```bash
 python3 -m pip install --user -e .[dev]
-```
+```python3 -m pip install --user -e .[dev]
 
 2. Build the Java parser bridge:
 

@@ -48,7 +48,7 @@ public class MppDump {
       item.put("baseline_finish_date", toIsoDate(task.getBaselineFinish()));
       item.put("percent_complete", task.getPercentageComplete() == null ? 0.0 : task.getPercentageComplete().doubleValue());
       item.put("critical_flag", Boolean.TRUE.equals(task.getCritical()));
-      item.put("milestone_flag", Boolean.TRUE.equals(task.getMilestone()));
+      item.put("milestone_flag", Boolean.TRUE.equals(task.getMilestone()) || isSameDay(task.getStart(), task.getFinish()));
       item.put("predecessor_refs", predecessors(task));
       item.put("notes", task.getNotes());
       tasks.add(item);
@@ -90,5 +90,12 @@ public class MppDump {
         return predecessorTask.getUniqueID() + ":" + relation.getType().name();
       })
       .collect(Collectors.joining(", "));
+  }
+
+  private static boolean isSameDay(LocalDateTime start, LocalDateTime finish) {
+    if (start == null || finish == null) {
+      return false;
+    }
+    return start.toLocalDate().equals(finish.toLocalDate());
   }
 }

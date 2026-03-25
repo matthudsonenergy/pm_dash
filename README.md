@@ -28,7 +28,7 @@ mvn -q package
 3. Run the sample import:
 
 ```bash
-PYTHONPATH=src python3 -m pm_dashboard.ingest \
+python3 -m pm_dashboard.ingest \
   --project pyrolysis-petal-2026 \
   --file "2026 Pyrolysis Petal - 24 Mar 2026.mpp"
 ```
@@ -36,7 +36,7 @@ PYTHONPATH=src python3 -m pm_dashboard.ingest \
 4. Start the app:
 
 ```bash
-PYTHONPATH=src python3 -m uvicorn pm_dashboard.main:app --reload
+python3 -m uvicorn pm_dashboard.main:app --reload
 ```
 
 Open `http://127.0.0.1:8000`.
