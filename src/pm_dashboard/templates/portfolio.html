@@ -57,6 +57,20 @@
             <span class="tag muted-tag">No active top risks</span>
           {% endfor %}
         </div>
+        <div class="metric-block">
+          <p class="mini-label">Leadership surprise risk</p>
+          <p>
+            {{ project.leadership_surprise_indicator.level|upper }}
+            ({{ project.leadership_surprise_indicator.score }})
+          </p>
+          <ul>
+            {% for driver in project.leadership_surprise_indicator.drivers[:2] %}
+              <li>{{ driver }}</li>
+            {% else %}
+              <li>No surprise-risk drivers triggered</li>
+            {% endfor %}
+          </ul>
+        </div>
       </article>
     {% endfor %}
   </section>

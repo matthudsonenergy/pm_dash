@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import HTTPException, UploadFile
+from sqlalchemy import select
 
 from .config import Settings, get_settings
 from .models import (
@@ -877,7 +878,144 @@ def dismiss_suggestion(session, suggestion: SuggestionItem) -> SuggestionItem:
     return suggestion
 
 
-def project_summary(session, project: Project, settings: Settings | None = None, today: Optional[date] = None) -> dict:
+def _health_score(
+    *,
+    material_slips: int,
+    overdue_actions: int,
+    stale_plan: bool,
+    unresolved_risks_decisions: int,
+) -> int:
+    return (material_slips * 5) + (overdue_actions * 3) + (8 if stale_plan else 0) + (unresolved_risks_decisions * 2)
+
+
+def project_health_history(
+    session,
+    project_id: int,
+    window_weeks: int = 4,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+) -> list[dict]:
+    settings = settings or get_settings()
+    today = today or date.today()
+    if window_weeks < 1:
+        return []
+
+    current_week = current_week_start(today)
+    week_starts = [current_week - timedelta(weeks=offset) for offset in range(window_weeks - 1, -1, -1)]
+    weekly_by_start = {item.week_start: item for item in list_weekly_updates(session, project_id, limit=window_weeks * 3)}
+    if not weekly_by_start:
+        return []
+
+    snapshots = session.scalars(
+        select(ScheduleSnapshot)
+        .where(ScheduleSnapshot.project_id == project_id)
+        .order_by(ScheduleSnapshot.imported_at.asc(), ScheduleSnapshot.id.asc())
+    ).all()
+
+    actions = list_actions(session, project_id, include_closed=True)
+    risks = list_risks(session, project_id, include_closed=True)
+    decisions = list_decisions(session, project_id, include_closed=True)
+
+    history: list[dict] = []
+    for week_start in week_starts:
+        weekly_update = weekly_by_start.get(week_start)
+        if not weekly_update:
+            continue
+        week_finish = week_end(week_start)
+        week_finish_dt = datetime.combine(week_finish, datetime.max.time(), tzinfo=UTC)
+
+        snapshot = None
+        for candidate in snapshots:
+            if candidate.imported_at.date() <= week_finish:
+                snapshot = candidate
+            else:
+                break
+
+        material_slips = 0
+        latest_import_date = None
+        if snapshot:
+            latest_import_date = snapshot.imported_at.date()
+            material_slips = sum(1 for milestone in list_milestones_for_snapshot(session, snapshot.id) if milestone.material_slip)
+
+        overdue_actions = len(
+            [
+                action
+                for action in actions
+                if action.created_at <= week_finish_dt
+                and action.due_date
+                and action.due_date < week_finish
+                and action.status != "done"
+            ]
+        )
+        unresolved_risks_decisions = len(
+            [
+                risk
+                for risk in risks
+                if risk.created_at <= week_finish_dt and risk.status != "closed"
+            ]
+        ) + len(
+            [
+                decision
+                for decision in decisions
+                if decision.created_at <= week_finish_dt and decision.status not in {"done", "closed"}
+            ]
+        )
+        stale_plan = is_stale(week_finish, latest_import_date, settings.stale_plan_days)
+        health_score = _health_score(
+            material_slips=material_slips,
+            overdue_actions=overdue_actions,
+            stale_plan=stale_plan,
+            unresolved_risks_decisions=unresolved_risks_decisions,
+        )
+
+        history.append(
+            {
+                "week_start": week_start.isoformat(),
+                "health_score": health_score,
+                "material_slips": material_slips,
+                "overdue_actions": overdue_actions,
+                "stale_plan": stale_plan,
+                "unresolved_risks_decisions": unresolved_risks_decisions,
+            }
+        )
+    return history
+
+
+def health_trend(
+    session,
+    project_id: int,
+    window_weeks: int = 4,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+) -> dict:
+    history = project_health_history(session, project_id, window_weeks=window_weeks, settings=settings, today=today)
+    if len(history) < 2:
+        return {"direction": "steady", "slope": 0.0, "history_points": len(history), "history": history}
+
+    y_values = [point["health_score"] for point in history]
+    x_values = list(range(len(y_values)))
+    mean_x = sum(x_values) / len(x_values)
+    mean_y = sum(y_values) / len(y_values)
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in zip(x_values, y_values))
+    denominator = sum((x - mean_x) ** 2 for x in x_values) or 1.0
+    slope = numerator / denominator
+
+    if slope >= 0.5:
+        direction = "deteriorating"
+    elif slope <= -0.5:
+        direction = "improving"
+    else:
+        direction = "steady"
+    return {"direction": direction, "slope": round(slope, 3), "history_points": len(history), "history": history}
+
+
+def project_summary(
+    session,
+    project: Project,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+    include_health_history: bool = False,
+) -> dict:
     settings = settings or get_settings()
     today = today or date.today()
     snapshot = get_latest_snapshot(session, project.id)
@@ -943,6 +1081,8 @@ def project_summary(session, project: Project, settings: Settings | None = None,
         attention += 6
 
     top_risks = sorted(open_risks, key=lambda item: (severity_rank(item.severity), item.updated_at), reverse=False)[:3]
+    trend = health_trend(session, project.id, window_weeks=4, settings=settings, today=today)
+    leadership_surprise = leadership_surprise_indicator(project, today=today, settings=settings)
 
     return {
         "project_id": project.id,
@@ -972,16 +1112,59 @@ def project_summary(session, project: Project, settings: Settings | None = None,
             "stale_plan": stale_plan,
         },
         "missing_weekly_update": current_update is None,
+        "health_trend_direction": trend["direction"],
+        "health_trend_score": trend["slope"],
+        "health_trend_history": trend["history"] if include_health_history else None,
+        "leadership_surprise_indicator": leadership_surprise,
     }
 
 
-def portfolio_view(session, settings: Settings | None = None, today: Optional[date] = None) -> list[dict]:
+def portfolio_view(
+    session,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+    leadership_level: Optional[str] = None,
+) -> list[dict]:
     settings = settings or get_settings()
     summaries = [project_summary(session, project, settings, today=today) for project in list_projects(session)]
-    ranked = sorted(summaries, key=lambda item: item["needs_pm_attention_score"], reverse=True)
+    if leadership_level:
+        normalized_level = leadership_level.strip().lower()
+        summaries = [
+            item
+            for item in summaries
+            if item["leadership_surprise_indicator"]["level"] == normalized_level
+        ]
+
+    ranked = sorted(
+        summaries,
+        key=lambda item: (
+            item["leadership_surprise_indicator"]["score"],
+            item["needs_pm_attention_score"],
+        ),
+        reverse=True,
+    )
     for index, summary in enumerate(ranked, start=1):
         summary["needs_attention_rank"] = index
     return ranked
+
+
+def deteriorating_projects(session, settings: Settings | None = None, today: Optional[date] = None) -> list[dict]:
+    settings = settings or get_settings()
+    today = today or date.today()
+    results: list[dict] = []
+    for project in list_projects(session):
+        trend = health_trend(session, project.id, window_weeks=4, settings=settings, today=today)
+        if trend["direction"] == "deteriorating" and 2 <= trend["history_points"] <= 4:
+            results.append(
+                {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "health_trend_direction": trend["direction"],
+                    "health_trend_score": trend["slope"],
+                    "history_points": trend["history_points"],
+                }
+            )
+    return sorted(results, key=lambda item: item["health_trend_score"], reverse=True)
 
 
 def project_detail(session, project: Project, settings: Settings | None = None, today: Optional[date] = None) -> dict:
@@ -1174,6 +1357,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
         f"{len(decisions_to_force)} decision(s) due, {len(risks_watch)} risk(s) on watch, "
         f"{missing_updates} missing weekly update(s)."
     )
+    deteriorating = deteriorating_projects(session, settings=settings, today=today)
 
     return {
         "week_start": selected_week.isoformat(),
@@ -1186,6 +1370,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
         "risks_watch": sorted(risks_watch, key=lambda item: (severity_rank(item["severity"]), item["title"])),
         "reminders": reminders,
         "portfolio_summary": portfolio_summary,
+        "deteriorating_projects": deteriorating,
     }
 
 
@@ -1196,6 +1381,17 @@ def attention_queue(session, settings: Settings | None = None, today: Optional[d
     current_week = current_week_start(today)
 
     for summary in portfolio_view(session, settings, today=today):
+        leadership_surprise = summary["leadership_surprise_indicator"]
+        if leadership_surprise["level"] == "high":
+            queue.append(
+                {
+                    "project_name": summary["project_name"],
+                    "category": "Leadership Surprise Risk",
+                    "detail": "; ".join(leadership_surprise["drivers"][:2]),
+                    "score": leadership_surprise["score"],
+                }
+            )
+
         if summary["stale_plan"]:
             queue.append(
                 {
@@ -1281,6 +1477,101 @@ def attention_queue(session, settings: Settings | None = None, today: Optional[d
                 )
 
     return sorted(queue, key=lambda item: item["score"], reverse=True)
+
+
+def leadership_surprise_indicator(project: Project, today: date, settings: Settings | None = None) -> dict:
+    settings = settings or get_settings()
+    snapshots = sorted(
+        project.snapshots,
+        key=lambda item: (item.imported_at, item.id),
+        reverse=True,
+    )
+    latest_snapshot = snapshots[0] if snapshots else None
+    recent_snapshots = snapshots[:3]
+    recent_material_slip_snapshots = sum(
+        1 for snapshot in recent_snapshots if any(milestone.material_slip for milestone in snapshot.milestones)
+    )
+
+    drivers: list[str] = []
+    score = 0
+
+    if recent_material_slip_snapshots >= 2:
+        score += 24
+        drivers.append("Repeated material milestone slips across recent snapshots")
+    elif recent_material_slip_snapshots == 1:
+        score += 10
+        drivers.append("Recent material milestone slip")
+
+    open_risks = [risk for risk in project.risks if risk.status != "closed"]
+    high_severity_or_worsening_risks = [
+        risk
+        for risk in open_risks
+        if risk.severity in {"high", "critical"} or risk.trend == "worsening"
+    ]
+    if high_severity_or_worsening_risks:
+        score += min(28, 10 + len(high_severity_or_worsening_risks) * 6)
+        drivers.append("High-severity or worsening risks are active")
+
+    open_decisions = [decision for decision in project.decisions if decision.status not in {"done", "closed"}]
+    overdue_decisions = [decision for decision in open_decisions if decision.due_date and decision.due_date < today]
+
+    next_milestone = None
+    if latest_snapshot:
+        future_milestones = sorted(
+            [milestone for milestone in latest_snapshot.milestones if milestone.finish_date and milestone.finish_date >= today],
+            key=lambda milestone: milestone.finish_date,
+        )
+        next_milestone = future_milestones[0] if future_milestones else None
+
+    if overdue_decisions:
+        if next_milestone and (next_milestone.finish_date - today).days <= settings.upcoming_milestone_days:
+            score += 20
+            drivers.append("Overdue decisions are unresolved near a milestone")
+        else:
+            score += 8
+            drivers.append("Overdue decisions remain unresolved")
+
+    latest_import_date = latest_snapshot.imported_at.date() if latest_snapshot else None
+    stale_plan = is_stale(today, latest_import_date, settings.stale_plan_days)
+    current_update = next((update for update in project.weekly_updates if update.week_start == current_week_start(today)), None)
+    if stale_plan and not current_update:
+        score += 20
+        drivers.append("Plan is stale and this week is missing a status update")
+    elif stale_plan or not current_update:
+        score += 8
+        drivers.append("Plan freshness/update cadence needs attention")
+
+    overdue_actions = [
+        action for action in project.actions if action.status != "done" and action.due_date and action.due_date < today
+    ]
+    overdue_critical_tasks = 0
+    material_slips_latest = 0
+    if latest_snapshot:
+        overdue_critical_tasks = sum(
+            1
+            for task in latest_snapshot.tasks
+            if task.critical_flag and task.finish_date and task.finish_date < today and (task.percent_complete or 0.0) < 100.0
+        )
+        material_slips_latest = sum(1 for milestone in latest_snapshot.milestones if milestone.material_slip)
+
+    confidence = confidence_score(
+        material_slips=material_slips_latest,
+        overdue_critical_tasks=overdue_critical_tasks,
+        overdue_actions=len(overdue_actions),
+        stale_plan=stale_plan,
+    )
+    if next_milestone and (next_milestone.finish_date - today).days <= 21 and confidence <= 75:
+        score += 18
+        drivers.append("Near-term milestone confidence is low")
+
+    if score >= 60:
+        level = "high"
+    elif score >= 30:
+        level = "medium"
+    else:
+        level = "low"
+
+    return {"score": score, "level": level, "drivers": drivers[:4]}
 
 
 def import_history(session) -> list[dict]:
