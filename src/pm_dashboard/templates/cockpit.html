@@ -18,6 +18,57 @@
 
   <section class="two-up">
     <article class="panel">
+      <h3>Executive Summary Draft</h3>
+      {% if cockpit.executive_summary_draft %}
+        <p><strong>Overall status:</strong> {{ cockpit.executive_summary_draft.draft.overall_status }}</p>
+        <p><strong>Changes since last week:</strong> {{ cockpit.executive_summary_draft.draft.changes_since_last_week }}</p>
+        <p><strong>Top 3 risks:</strong></p>
+        <ul>
+          {% for risk in cockpit.executive_summary_draft.draft.top_3_risks %}
+            <li>{{ risk }}</li>
+          {% else %}
+            <li>No portfolio risks captured.</li>
+          {% endfor %}
+        </ul>
+        <p><strong>Decision asks:</strong></p>
+        <ul>
+          {% for ask in cockpit.executive_summary_draft.draft.decision_asks %}
+            <li>{{ ask }}</li>
+          {% else %}
+            <li>No immediate decisions due this week.</li>
+          {% endfor %}
+        </ul>
+        <p><strong>Next-week watchlist:</strong></p>
+        <ul>
+          {% for item in cockpit.executive_summary_draft.draft.next_week_watchlist %}
+            <li>{{ item }}</li>
+          {% else %}
+            <li>No elevated watchlist items.</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="subtle">No draft generated for this week yet.</p>
+      {% endif %}
+    </article>
+    <article class="panel">
+      <h3>Executive Summary (PM Final)</h3>
+      {% if cockpit.executive_summary_final and cockpit.executive_summary_final.final %}
+        <p><strong>Overall status:</strong> {{ cockpit.executive_summary_final.final.overall_status }}</p>
+        <p><strong>Changes since last week:</strong> {{ cockpit.executive_summary_final.final.changes_since_last_week }}</p>
+        <p><strong>Top 3 risks:</strong></p>
+        <ul>
+          {% for risk in cockpit.executive_summary_final.final.top_3_risks %}
+            <li>{{ risk }}</li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="subtle">No PM-approved final summary yet.</p>
+      {% endif %}
+    </article>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
       <h3>Review Queue</h3>
       <div class="table-wrap">
         <table>

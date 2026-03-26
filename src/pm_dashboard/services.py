@@ -4,8 +4,10 @@ import hashlib
 import json
 import re
 import shutil
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from itertools import combinations
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,6 +21,8 @@ from .models import (
     ImportRun,
     Milestone,
     Project,
+    ProjectDependency,
+    PortfolioSummaryDraft,
     RiskItem,
     ScheduleSnapshot,
     SuggestionItem,
@@ -37,12 +41,15 @@ from .repository import (
     list_actions,
     list_critical_tasks_for_snapshot,
     list_decisions,
+    list_dependencies,
+    list_dependencies_for_project,
     list_import_runs,
     list_milestones_for_snapshot,
     list_projects,
     list_risks,
     list_suggestions,
     list_tasks_for_snapshot,
+    list_overdue_dependencies,
     list_weekly_updates,
 )
 from .scoring import attention_score, confidence_score, is_stale, rag_from_confidence, working_days_between
@@ -53,6 +60,7 @@ ACTION_OWNER_RE = re.compile(r"owner\s*[:=]\s*([^;|]+)", re.IGNORECASE)
 ACTION_DUE_RE = re.compile(r"(?:due|by)\s*[:=]?\s*(20\d{2}-\d{2}-\d{2})", re.IGNORECASE)
 ACTION_LEADING_OWNER_RE = re.compile(r"^\s*([A-Z][A-Za-z .'-]{1,60})\s+to\s+(.+)$")
 TEXT_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+DEPENDENCY_REF_RE = re.compile(r"([a-z0-9-]+)\s*[:/#]\s*([A-Za-z0-9_.-]+)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -139,6 +147,19 @@ def truthy(value: Any) -> bool:
     if value is None:
         return False
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_open_dependency_status(status: str) -> bool:
+    return (status or "").lower() not in {"closed", "resolved", "done"}
+
+
+def parse_external_dependency_ref(value: Optional[str]) -> Optional[tuple[str, str]]:
+    if not value:
+        return None
+    match = DEPENDENCY_REF_RE.search(value)
+    if not match:
+        return None
+    return match.group(1).lower(), match.group(2).strip()
 
 
 def _json_dumps(payload: dict) -> str:
@@ -277,6 +298,9 @@ def _persist_snapshot(
                 milestone_flag=task.milestone_flag,
                 predecessor_refs=task.predecessor_refs,
                 notes=task.notes,
+                resource_names=", ".join(task.resource_names) if task.resource_names else None,
+                primary_owner=task.primary_owner,
+                resource_key=task.resource_key,
             )
         )
 
@@ -301,9 +325,150 @@ def _persist_snapshot(
                 )
             )
 
+    session.flush()
+    _refresh_cross_project_dependencies(session, project, snapshot.id)
     session.commit()
     session.refresh(snapshot)
     return snapshot
+
+def _refresh_cross_project_dependencies(session, downstream_project: Project, snapshot_id: int) -> None:
+    session.query(ProjectDependency).filter(
+        ProjectDependency.downstream_project_id == downstream_project.id,
+        ProjectDependency.source == "import",
+    ).delete(synchronize_session=False)
+
+    tasks = list_tasks_for_snapshot(session, snapshot_id)
+    known_projects = {item.key.lower(): item.id for item in list_projects(session)}
+
+    for task in tasks:
+        parsed_ref = parse_external_dependency_ref(task.predecessor_refs)
+        if not parsed_ref:
+            continue
+        upstream_key, upstream_task_ref = parsed_ref
+        upstream_project_id = known_projects.get(upstream_key)
+        if not upstream_project_id or upstream_project_id == downstream_project.id:
+            continue
+        dependency = ProjectDependency(
+            upstream_project_id=upstream_project_id,
+            downstream_project_id=downstream_project.id,
+            upstream_task_ref=upstream_task_ref,
+            downstream_task_ref=task.name,
+            needed_by_date=task.start_date or task.finish_date,
+            status="blocked" if (task.percent_complete or 0.0) < 100.0 else "resolved",
+            owner=None,
+            source="import",
+        )
+        session.add(dependency)
+
+
+def _normalize_resource_key(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return "".join(char.lower() for char in value if char.isalnum())
+
+
+def _task_window(task: Task) -> tuple[Optional[date], Optional[date]]:
+    if task.start_date and task.finish_date:
+        start, finish = sorted([task.start_date, task.finish_date])
+        return start, finish
+    point = task.finish_date or task.start_date
+    return point, point
+
+
+def _overlap_days(start_a: date, end_a: date, start_b: date, end_b: date) -> int:
+    latest_start = max(start_a, start_b)
+    earliest_end = min(end_a, end_b)
+    if earliest_end < latest_start:
+        return 0
+    return (earliest_end - latest_start).days + 1
+
+
+def detect_resource_conflicts(
+    session,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+    due_window_days: int = 14,
+) -> list[dict]:
+    settings = settings or get_settings()
+    today = today or date.today()
+    entries_by_resource: dict[str, list[dict]] = defaultdict(list)
+
+    for project in list_projects(session):
+        snapshot = get_latest_snapshot(session, project.id)
+        if not snapshot:
+            continue
+        for task in list_critical_tasks_for_snapshot(session, snapshot.id):
+            start, finish = _task_window(task)
+            if not start or not finish:
+                continue
+            resource_key = task.resource_key or _normalize_resource_key(task.primary_owner)
+            if not resource_key and task.resource_names:
+                resource_key = _normalize_resource_key(task.resource_names.split(",")[0].strip())
+            if not resource_key:
+                continue
+            label = task.primary_owner or (task.resource_names.split(",")[0].strip() if task.resource_names else resource_key)
+            entries_by_resource[resource_key].append(
+                {
+                    "resource_key": resource_key,
+                    "resource_label": label,
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "task_name": task.name,
+                    "start_date": start,
+                    "finish_date": finish,
+                    "critical_flag": bool(task.critical_flag),
+                    "milestone_flag": bool(task.milestone_flag),
+                }
+            )
+
+    clusters: list[dict] = []
+    for resource_key, entries in entries_by_resource.items():
+        if len({entry["project_id"] for entry in entries}) < 2:
+            continue
+        conflicts: list[dict] = []
+        for left, right in combinations(entries, 2):
+            if left["project_id"] == right["project_id"]:
+                continue
+            overlap_days = _overlap_days(left["start_date"], left["finish_date"], right["start_date"], right["finish_date"])
+            due_gap_days = abs((left["finish_date"] - right["finish_date"]).days)
+            due_window_overlap = due_gap_days <= due_window_days
+            if overlap_days <= 0 and not due_window_overlap:
+                continue
+            criticality_weight = 4 if left["critical_flag"] and right["critical_flag"] else 2
+            if left["milestone_flag"] or right["milestone_flag"]:
+                criticality_weight += 1
+            overlap_weight = overlap_days * 1.5 if overlap_days else 0.5
+            due_window_weight = max(0.0, (due_window_days - due_gap_days) / max(due_window_days, 1))
+            severity = round(criticality_weight + overlap_weight + due_window_weight, 2)
+            conflicts.append(
+                {
+                    "projects": [left["project_name"], right["project_name"]],
+                    "tasks": [left["task_name"], right["task_name"]],
+                    "start_date": min(left["start_date"], right["start_date"]).isoformat(),
+                    "finish_date": max(left["finish_date"], right["finish_date"]).isoformat(),
+                    "overlap_days": overlap_days,
+                    "due_gap_days": due_gap_days,
+                    "severity": severity,
+                }
+            )
+        if not conflicts:
+            continue
+        conflicts.sort(key=lambda item: item["severity"], reverse=True)
+        projects = sorted({project for item in conflicts for project in item["projects"]})
+        clusters.append(
+            {
+                "resource_key": resource_key,
+                "resource_label": entries[0]["resource_label"],
+                "severity_score": round(sum(item["severity"] for item in conflicts), 2),
+                "conflict_count": len(conflicts),
+                "impacted_projects": projects,
+                "window_start": min(item["start_date"] for item in conflicts),
+                "window_end": max(item["finish_date"] for item in conflicts),
+                "conflicts": conflicts,
+            }
+        )
+
+    return sorted(clusters, key=lambda item: (item["severity_score"], item["conflict_count"]), reverse=True)
 
 
 def create_action(session, project: Project, payload: ActionCreate) -> ActionItem:
@@ -461,6 +626,33 @@ def serialize_suggestion(suggestion: SuggestionItem) -> dict:
         "status": suggestion.status,
         "created_at": suggestion.created_at.isoformat() if suggestion.created_at else None,
         "reviewed_at": suggestion.reviewed_at.isoformat() if suggestion.reviewed_at else None,
+    }
+
+def serialize_dependency(item: ProjectDependency) -> dict:
+    return {
+        "id": item.id,
+        "upstream_project_id": item.upstream_project_id,
+        "upstream_project_name": item.upstream_project.name if item.upstream_project else None,
+        "downstream_project_id": item.downstream_project_id,
+        "downstream_project_name": item.downstream_project.name if item.downstream_project else None,
+        "upstream_task_ref": item.upstream_task_ref,
+        "downstream_task_ref": item.downstream_task_ref,
+        "needed_by_date": item.needed_by_date.isoformat() if item.needed_by_date else None,
+        "status": item.status,
+        "owner": item.owner,
+        "source": item.source,
+    }
+
+
+def serialize_portfolio_summary_draft(draft: PortfolioSummaryDraft) -> dict:
+    return {
+        "id": draft.id,
+        "week_start": draft.week_start.isoformat(),
+        "draft": _json_loads(draft.draft_payload),
+        "final": _json_loads(draft.final_payload) if draft.final_payload else None,
+        "status": draft.status,
+        "created_at": draft.created_at.isoformat() if draft.created_at else None,
+        "reviewed_at": draft.reviewed_at.isoformat() if draft.reviewed_at else None,
     }
 
 
@@ -1061,12 +1253,20 @@ def project_summary(
         if decision.status not in {"done", "closed"}
     ]
     current_update = get_weekly_update(session, project.id, current_week_start(today))
+    overdue_dependencies_count = len(
+        [
+            item
+            for item in list_dependencies_for_project(session, project.id, include_closed=False)
+            if item.needed_by_date and item.needed_by_date < today and is_open_dependency_status(item.status)
+        ]
+    )
 
     confidence = confidence_score(
         material_slips=material_slips,
         overdue_critical_tasks=overdue_critical_tasks,
         overdue_actions=len(overdue_actions),
         stale_plan=stale_plan,
+        overdue_dependencies=overdue_dependencies_count,
     )
     attention = attention_score(
         material_slips=material_slips,
@@ -1094,7 +1294,7 @@ def project_summary(
         "next_major_milestone_date": next_milestone.finish_date.isoformat() if next_milestone and next_milestone.finish_date else None,
         "days_to_next_milestone": (next_milestone.finish_date - today).days if next_milestone and next_milestone.finish_date else None,
         "overdue_actions_count": len(overdue_actions),
-        "overdue_dependencies_count": 0,
+        "overdue_dependencies_count": overdue_dependencies_count,
         "open_decisions_count": len(open_decisions),
         "recent_schedule_movement": recent_schedule_movement,
         "needs_pm_attention_score": attention,
@@ -1109,6 +1309,7 @@ def project_summary(
             "material_slips": material_slips,
             "overdue_critical_tasks": overdue_critical_tasks,
             "overdue_actions": len(overdue_actions),
+            "overdue_dependencies": overdue_dependencies_count,
             "stale_plan": stale_plan,
         },
         "missing_weekly_update": current_update is None,
@@ -1147,7 +1348,6 @@ def portfolio_view(
         summary["needs_attention_rank"] = index
     return ranked
 
-
 def deteriorating_projects(session, settings: Settings | None = None, today: Optional[date] = None) -> list[dict]:
     settings = settings or get_settings()
     today = today or date.today()
@@ -1165,6 +1365,20 @@ def deteriorating_projects(session, settings: Settings | None = None, today: Opt
                 }
             )
     return sorted(results, key=lambda item: item["health_trend_score"], reverse=True)
+
+
+def dependencies_view(session, project_id: int | None = None, today: Optional[date] = None) -> dict:
+    today = today or date.today()
+    rows = (
+        list_dependencies_for_project(session, project_id, include_closed=True)
+        if project_id is not None
+        else list_dependencies(session, include_closed=True)
+    )
+    return {
+        "today": today.isoformat(),
+        "dependencies": [serialize_dependency(item) for item in rows],
+        "overdue": [serialize_dependency(item) for item in list_overdue_dependencies(session, today=today)],
+    }
 
 
 def project_detail(session, project: Project, settings: Settings | None = None, today: Optional[date] = None) -> dict:
@@ -1371,7 +1585,137 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
         "reminders": reminders,
         "portfolio_summary": portfolio_summary,
         "deteriorating_projects": deteriorating,
+        "executive_summary_draft": get_latest_portfolio_summary_draft(session, selected_week, status="pending"),
+        "executive_summary_final": get_latest_portfolio_summary_draft(session, selected_week, status="accepted"),
     }
+
+
+def generate_portfolio_executive_summary(
+    session,
+    week_start: date,
+    settings: Settings | None = None,
+) -> dict:
+    settings = settings or get_settings()
+    week_data = cockpit_view(session, settings=settings, week_start=week_start)
+    last_week_data = cockpit_view(session, settings=settings, week_start=week_start - timedelta(days=7))
+    projects = list_projects(session)
+
+    open_risks: list[RiskItem] = []
+    open_decisions: list[DecisionItem] = []
+    for project in projects:
+        open_risks.extend([item for item in list_risks(session, project.id, include_closed=False) if item.status != "closed"])
+        open_decisions.extend(
+            [
+                item
+                for item in list_decisions(session, project.id, include_closed=False)
+                if item.status not in {"done", "closed"}
+            ]
+        )
+
+    top_risks = sorted(
+        open_risks,
+        key=lambda item: (severity_rank(item.severity), item.updated_at),
+    )[:3]
+    decision_asks = sorted(
+        [item for item in open_decisions if item.due_date and item.due_date <= week_end(week_start)],
+        key=lambda item: item.due_date or date.max,
+    )[:5]
+    next_week_watchlist = sorted(
+        [item for item in open_risks if item.trend == "worsening" or item.severity in {"high", "critical"}],
+        key=lambda item: (severity_rank(item.severity), item.title),
+    )[:5]
+
+    payload = {
+        "overall_status": week_data["portfolio_summary"],
+        "changes_since_last_week": (
+            f"Updates received: {sum(1 for row in week_data['project_rows'] if row['weekly_update'])}"
+            f" (prev {sum(1 for row in last_week_data['project_rows'] if row['weekly_update'])}); "
+            f"material slips: {sum(row['summary']['material_slips_count'] for row in week_data['project_rows'])}"
+            f" (prev {sum(row['summary']['material_slips_count'] for row in last_week_data['project_rows'])}); "
+            f"overdue actions: {len(week_data['overdue_actions'])}"
+            f" (prev {len(last_week_data['overdue_actions'])})."
+        ),
+        "top_3_risks": [
+            f"{risk.project.name}: {risk.title} [{risk.severity}] ({risk.trend})"
+            for risk in top_risks
+        ],
+        "decision_asks": [
+            f"{decision.project.name}: {decision.summary} (owner: {decision.owner or 'Unassigned'}, due: {decision.due_date.isoformat() if decision.due_date else 'TBD'})"
+            for decision in decision_asks
+        ],
+        "next_week_watchlist": [
+            f"{risk.project.name}: {risk.title}"
+            for risk in next_week_watchlist
+        ],
+    }
+    return payload
+
+
+def create_portfolio_summary_draft(session, week_start: date, settings: Settings | None = None) -> PortfolioSummaryDraft:
+    for existing in (
+        session.query(PortfolioSummaryDraft)
+        .filter(PortfolioSummaryDraft.week_start == week_start, PortfolioSummaryDraft.status == "pending")
+        .all()
+    ):
+        session.delete(existing)
+    session.flush()
+
+    payload = generate_portfolio_executive_summary(session, week_start, settings=settings)
+    draft = PortfolioSummaryDraft(
+        week_start=week_start,
+        draft_payload=_json_dumps(payload),
+        status="pending",
+    )
+    session.add(draft)
+    session.commit()
+    session.refresh(draft)
+    return draft
+
+
+def get_portfolio_summary_draft_or_404(session, draft_id: int) -> PortfolioSummaryDraft:
+    draft = session.get(PortfolioSummaryDraft, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Portfolio summary draft not found")
+    return draft
+
+
+def get_latest_portfolio_summary_draft(
+    session,
+    week_start: date,
+    status: str,
+) -> Optional[dict]:
+    draft = (
+        session.query(PortfolioSummaryDraft)
+        .filter(PortfolioSummaryDraft.week_start == week_start, PortfolioSummaryDraft.status == status)
+        .order_by(PortfolioSummaryDraft.id.desc())
+        .first()
+    )
+    return serialize_portfolio_summary_draft(draft) if draft else None
+
+
+def accept_portfolio_summary_draft(
+    session,
+    draft: PortfolioSummaryDraft,
+    final_payload: Optional[dict] = None,
+) -> PortfolioSummaryDraft:
+    if draft.status != "pending":
+        raise HTTPException(status_code=400, detail="Only pending drafts can be accepted")
+    draft.status = "accepted"
+    draft.final_payload = _json_dumps(final_payload or _json_loads(draft.draft_payload))
+    draft.reviewed_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(draft)
+    return draft
+
+
+def dismiss_portfolio_summary_draft(session, draft: PortfolioSummaryDraft) -> PortfolioSummaryDraft:
+    if draft.status != "pending":
+        raise HTTPException(status_code=400, detail="Only pending drafts can be dismissed")
+    draft.status = "dismissed"
+    draft.reviewed_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(draft)
+    return draft
 
 
 def attention_queue(session, settings: Settings | None = None, today: Optional[date] = None) -> list[dict]:
@@ -1419,6 +1763,16 @@ def attention_queue(session, settings: Settings | None = None, today: Optional[d
                     "category": "Overdue Actions",
                     "detail": f"{summary['overdue_actions_count']} action(s) overdue",
                     "score": summary["overdue_actions_count"] * 4,
+                }
+            )
+
+        if summary["overdue_dependencies_count"]:
+            queue.append(
+                {
+                    "project_name": summary["project_name"],
+                    "category": "Blocked Cross-Project Dependencies",
+                    "detail": f"{summary['overdue_dependencies_count']} dependency(ies) overdue",
+                    "score": summary["overdue_dependencies_count"] * 5,
                 }
             )
 

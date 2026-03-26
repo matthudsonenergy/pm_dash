@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Cross-Project Dependencies{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Dependencies</p>
+      <h2>Cross-project handoffs and overdue blockers.</h2>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Overdue Dependencies</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Upstream</th>
+            <th>Downstream</th>
+            <th>Upstream task ref</th>
+            <th>Downstream task</th>
+            <th>Needed by</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in dependency_data.overdue %}
+            <tr>
+              <td>{{ item.upstream_project_name or item.upstream_project_id }}</td>
+              <td>{{ item.downstream_project_name or item.downstream_project_id }}</td>
+              <td>{{ item.upstream_task_ref }}</td>
+              <td>{{ item.downstream_task_ref }}</td>
+              <td>{{ item.needed_by_date or "N/A" }}</td>
+              <td>{{ item.status }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6">No overdue dependencies.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>All Dependencies</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Upstream</th>
+            <th>Downstream</th>
+            <th>Upstream task ref</th>
+            <th>Downstream task</th>
+            <th>Needed by</th>
+            <th>Status</th>
+            <th>Source</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in dependency_data.dependencies %}
+            <tr>
+              <td>{{ item.upstream_project_name or item.upstream_project_id }}</td>
+              <td>{{ item.downstream_project_name or item.downstream_project_id }}</td>
+              <td>{{ item.upstream_task_ref }}</td>
+              <td>{{ item.downstream_task_ref }}</td>
+              <td>{{ item.needed_by_date or "N/A" }}</td>
+              <td>{{ item.status }}</td>
+              <td>{{ item.source }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7">No dependencies detected yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import date
+
+from sqlalchemy import or_, select
 
 from .models import (
     ActionItem,
@@ -8,6 +10,7 @@ from .models import (
     ImportRun,
     Milestone,
     Project,
+    ProjectDependency,
     RiskItem,
     ScheduleSnapshot,
     SuggestionItem,
@@ -136,3 +139,44 @@ def get_decision(session, decision_id: int):
 
 def get_weekly_update_by_id(session, update_id: int):
     return session.get(WeeklyUpdate, update_id)
+
+
+def list_dependencies(
+    session,
+    include_closed: bool = True,
+    source: str | None = None,
+    status: str | None = None,
+):
+    stmt = select(ProjectDependency)
+    if not include_closed:
+        stmt = stmt.where(ProjectDependency.status.not_in(["closed", "resolved", "done"]))
+    if source is not None:
+        stmt = stmt.where(ProjectDependency.source == source)
+    if status is not None:
+        stmt = stmt.where(ProjectDependency.status == status)
+    return session.scalars(stmt.order_by(ProjectDependency.needed_by_date, ProjectDependency.id)).all()
+
+
+def list_dependencies_for_project(session, project_id: int, include_closed: bool = True):
+    stmt = select(ProjectDependency).where(
+        or_(
+            ProjectDependency.upstream_project_id == project_id,
+            ProjectDependency.downstream_project_id == project_id,
+        )
+    )
+    if not include_closed:
+        stmt = stmt.where(ProjectDependency.status.not_in(["closed", "resolved", "done"]))
+    return session.scalars(stmt.order_by(ProjectDependency.needed_by_date, ProjectDependency.id)).all()
+
+
+def list_overdue_dependencies(session, today: date | None = None):
+    today = today or date.today()
+    return session.scalars(
+        select(ProjectDependency)
+        .where(
+            ProjectDependency.needed_by_date.is_not(None),
+            ProjectDependency.needed_by_date < today,
+            ProjectDependency.status.not_in(["closed", "resolved", "done"]),
+        )
+        .order_by(ProjectDependency.needed_by_date, ProjectDependency.id)
+    ).all()

@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
-from pm_dashboard.models import Milestone, Project, ScheduleSnapshot
+from pm_dashboard.models import Milestone, Project, ProjectDependency, ScheduleSnapshot
+from pm_dashboard.parser import ParsedProject, ParsedTask
+from pm_dashboard.repository import get_latest_snapshot, list_tasks_for_snapshot
 from pm_dashboard.services import (
     DecisionCreate,
     RiskCreate,
     WeeklyUpdateCreate,
+    accept_portfolio_summary_draft,
     attention_queue,
     create_decision,
+    create_portfolio_summary_draft,
     create_risk,
+    detect_resource_conflicts,
+    dismiss_portfolio_summary_draft,
+    generate_portfolio_executive_summary,
     health_trend,
+    import_schedule,
     leadership_surprise_indicator,
     portfolio_view,
     project_summary,
@@ -101,6 +110,93 @@ def _add_snapshot(
         )
     )
     session.commit()
+
+
+def _seed_portfolio_signals(app) -> None:
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        create_risk(
+            session,
+            project,
+            RiskCreate(
+                title="Vendor FAT delay",
+                description="Factory acceptance test moved.",
+                severity="high",
+                trend="worsening",
+                source="manual",
+            ),
+        )
+        create_decision(
+            session,
+            project,
+            DecisionCreate(
+                summary="Approve overtime package",
+                context="Required to recover commissioning window.",
+                owner="Matt",
+                due_date=date(2026, 3, 27),
+                status="pending",
+                source="manual",
+            ),
+        )
+
+
+def _parsed_with_external_ref(task_date: date) -> ParsedProject:
+    return ParsedProject(
+        title="Pyrolysis Petal",
+        current_finish_date=task_date,
+        baseline_finish_date=task_date,
+        tasks=[
+            ParsedTask(
+                unique_id=11,
+                outline_level=1,
+                outline_path="1",
+                name="Receive handoff package",
+                start_date=task_date,
+                finish_date=task_date,
+                baseline_start_date=task_date,
+                baseline_finish_date=task_date,
+                percent_complete=25.0,
+                critical_flag=True,
+                milestone_flag=False,
+                predecessor_refs="project-2:UP-45",
+                notes="waiting on external project",
+                resource_names=[],
+                primary_owner=None,
+                resource_key=None,
+            )
+        ],
+    )
+
+
+def _task(
+    *,
+    unique_id: int,
+    name: str,
+    start_date: date,
+    finish_date: date,
+    resource_names: list[str],
+    primary_owner: str,
+    resource_key: str,
+    milestone_flag: bool = False,
+) -> ParsedTask:
+    return ParsedTask(
+        unique_id=unique_id,
+        outline_level=1,
+        outline_path="1",
+        name=name,
+        start_date=start_date,
+        finish_date=finish_date,
+        baseline_start_date=start_date,
+        baseline_finish_date=finish_date,
+        percent_complete=10.0,
+        critical_flag=True,
+        milestone_flag=milestone_flag,
+        predecessor_refs=None,
+        notes=None,
+        resource_names=resource_names,
+        primary_owner=primary_owner,
+        resource_key=resource_key,
+    )
 
 
 def test_health_trend_improving_trajectory(app):
@@ -313,3 +409,301 @@ def test_portfolio_filter_and_attention_category_for_leadership_surprise(app):
         item["category"] == "Leadership Surprise Risk" and item["project_name"] == "Project 5"
         for item in queue
     )
+
+
+def test_dependency_created_from_external_predecessor(monkeypatch, app, tmp_path: Path):
+    sample_file = tmp_path / "sample.mpp"
+    sample_file.write_text("placeholder", encoding="utf-8")
+    monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", lambda *args, **kwargs: _parsed_with_external_ref(date.today()))
+
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
+        dependencies = session.query(ProjectDependency).all()
+
+    assert len(dependencies) == 1
+    assert dependencies[0].upstream_task_ref == "UP-45"
+    assert dependencies[0].status == "blocked"
+
+
+def test_project_summary_counts_overdue_dependencies(app):
+    today = date(2026, 3, 26)
+    with app.state.session_factory() as session:
+        downstream = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        upstream = session.query(Project).filter(Project.key == "project-2").one()
+        session.add(
+            ProjectDependency(
+                upstream_project_id=upstream.id,
+                downstream_project_id=downstream.id,
+                upstream_task_ref="EXT-22",
+                downstream_task_ref="Install reactor",
+                needed_by_date=today - timedelta(days=2),
+                status="open",
+                owner="Ana",
+                source="manual",
+            )
+        )
+        session.commit()
+
+        summary = project_summary(session, downstream, settings=app.state.settings, today=today)
+
+    assert summary["overdue_dependencies_count"] == 1
+
+
+def test_attention_queue_flags_blocked_cross_project_dependencies(app):
+    today = date(2026, 3, 26)
+    with app.state.session_factory() as session:
+        downstream = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        upstream = session.query(Project).filter(Project.key == "project-2").one()
+        session.add(
+            ProjectDependency(
+                upstream_project_id=upstream.id,
+                downstream_project_id=downstream.id,
+                upstream_task_ref="EXT-99",
+                downstream_task_ref="Commissioning prep",
+                needed_by_date=today - timedelta(days=1),
+                status="blocked",
+                owner="Matt",
+                source="manual",
+            )
+        )
+        session.commit()
+
+        queue = attention_queue(session, settings=app.state.settings, today=today)
+
+    categories = {item["category"] for item in queue}
+    assert "Blocked Cross-Project Dependencies" in categories
+
+
+def test_phase3_ingests_resource_fields(monkeypatch, app, tmp_path: Path):
+    sample_file = tmp_path / "sample.mpp"
+    sample_file.write_text("placeholder", encoding="utf-8")
+
+    parsed_project = ParsedProject(
+        title="Resource Demo",
+        current_finish_date=date(2026, 4, 2),
+        baseline_finish_date=date(2026, 4, 1),
+        tasks=[
+            _task(
+                unique_id=100,
+                name="Critical install",
+                start_date=date(2026, 3, 29),
+                finish_date=date(2026, 4, 2),
+                resource_names=["Alex Kim", "Ops Team"],
+                primary_owner="Alex Kim",
+                resource_key="alexkim",
+            )
+        ],
+    )
+
+    monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", lambda *args, **kwargs: parsed_project)
+
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
+
+        snapshot = get_latest_snapshot(session, project.id)
+        tasks = list_tasks_for_snapshot(session, snapshot.id)
+
+    assert tasks[0].resource_names == "Alex Kim, Ops Team"
+    assert tasks[0].primary_owner == "Alex Kim"
+    assert tasks[0].resource_key == "alexkim"
+
+
+def test_phase3_detects_cross_project_resource_overlap(monkeypatch, app, tmp_path: Path):
+    project_a_file = tmp_path / "pyrolysis-petal-2026.mpp"
+    project_b_file = tmp_path / "project-2.mpp"
+    project_a_file.write_text("placeholder-a", encoding="utf-8")
+    project_b_file.write_text("placeholder-b", encoding="utf-8")
+
+    parsed_by_project = {
+        "pyrolysis-petal-2026": ParsedProject(
+            title="Project A",
+            current_finish_date=date(2026, 4, 3),
+            baseline_finish_date=date(2026, 4, 1),
+            tasks=[
+                _task(
+                    unique_id=1,
+                    name="Startup critical path",
+                    start_date=date(2026, 3, 28),
+                    finish_date=date(2026, 4, 3),
+                    resource_names=["Sam Lee"],
+                    primary_owner="Sam Lee",
+                    resource_key="samlee",
+                    milestone_flag=True,
+                )
+            ],
+        ),
+        "project-2": ParsedProject(
+            title="Project B",
+            current_finish_date=date(2026, 4, 2),
+            baseline_finish_date=date(2026, 4, 1),
+            tasks=[
+                _task(
+                    unique_id=2,
+                    name="Commissioning gate",
+                    start_date=date(2026, 3, 30),
+                    finish_date=date(2026, 4, 2),
+                    resource_names=["Sam Lee"],
+                    primary_owner="Sam Lee",
+                    resource_key="samlee",
+                )
+            ],
+        ),
+    }
+
+    def fake_parse(file_path, settings):
+        return parsed_by_project[file_path.stem]
+
+    monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
+
+    with app.state.session_factory() as session:
+        project_a = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project_b = session.query(Project).filter(Project.key == "project-2").one()
+
+        import_schedule(
+            session,
+            project_a,
+            project_a_file,
+            source_filename="pyrolysis-petal-2026.mpp",
+            settings=app.state.settings,
+        )
+        import_schedule(
+            session,
+            project_b,
+            project_b_file,
+            source_filename="project-2.mpp",
+            settings=app.state.settings,
+        )
+
+        clusters = detect_resource_conflicts(session, settings=app.state.settings)
+
+    assert clusters
+    top = clusters[0]
+    assert top["resource_key"] == "samlee"
+    assert {"Pyrolysis Petal 2026", "Project 2"}.issubset(set(top["impacted_projects"]))
+
+
+def test_phase3_ranks_conflicts_by_severity(monkeypatch, app, tmp_path: Path):
+    project_a_file = tmp_path / "pyrolysis-petal-2026.mpp"
+    project_b_file = tmp_path / "project-2.mpp"
+    project_a_file.write_text("placeholder-a", encoding="utf-8")
+    project_b_file.write_text("placeholder-b", encoding="utf-8")
+
+    parsed_by_project = {
+        "pyrolysis-petal-2026": ParsedProject(
+            title="Project A",
+            current_finish_date=date(2026, 4, 4),
+            baseline_finish_date=date(2026, 4, 1),
+            tasks=[
+                _task(
+                    unique_id=1,
+                    name="A1",
+                    start_date=date(2026, 3, 29),
+                    finish_date=date(2026, 4, 4),
+                    resource_names=["Taylor"],
+                    primary_owner="Taylor",
+                    resource_key="taylor",
+                    milestone_flag=True,
+                ),
+                _task(
+                    unique_id=2,
+                    name="A2",
+                    start_date=date(2026, 4, 8),
+                    finish_date=date(2026, 4, 10),
+                    resource_names=["Jordan"],
+                    primary_owner="Jordan",
+                    resource_key="jordan",
+                ),
+            ],
+        ),
+        "project-2": ParsedProject(
+            title="Project B",
+            current_finish_date=date(2026, 4, 4),
+            baseline_finish_date=date(2026, 4, 1),
+            tasks=[
+                _task(
+                    unique_id=3,
+                    name="B1",
+                    start_date=date(2026, 3, 30),
+                    finish_date=date(2026, 4, 3),
+                    resource_names=["Taylor"],
+                    primary_owner="Taylor",
+                    resource_key="taylor",
+                ),
+                _task(
+                    unique_id=4,
+                    name="B2",
+                    start_date=date(2026, 4, 9),
+                    finish_date=date(2026, 4, 11),
+                    resource_names=["Jordan"],
+                    primary_owner="Jordan",
+                    resource_key="jordan",
+                ),
+            ],
+        ),
+    }
+
+    def fake_parse(file_path, settings):
+        return parsed_by_project[file_path.stem]
+
+    monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
+
+    with app.state.session_factory() as session:
+        project_a = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project_b = session.query(Project).filter(Project.key == "project-2").one()
+
+        import_schedule(
+            session,
+            project_a,
+            project_a_file,
+            source_filename="pyrolysis-petal-2026.mpp",
+            settings=app.state.settings,
+        )
+        import_schedule(
+            session,
+            project_b,
+            project_b_file,
+            source_filename="project-2.mpp",
+            settings=app.state.settings,
+        )
+
+        clusters = detect_resource_conflicts(session, settings=app.state.settings)
+
+    by_key = {item["resource_key"]: item for item in clusters}
+    assert by_key["taylor"]["severity_score"] > by_key["jordan"]["severity_score"]
+
+
+def test_generate_portfolio_executive_summary_sections(app):
+    _seed_portfolio_signals(app)
+    with app.state.session_factory() as session:
+        payload = generate_portfolio_executive_summary(session, date(2026, 3, 23), settings=app.state.settings)
+
+    assert payload["overall_status"]
+    assert payload["changes_since_last_week"]
+    assert isinstance(payload["top_3_risks"], list)
+    assert isinstance(payload["decision_asks"], list)
+    assert isinstance(payload["next_week_watchlist"], list)
+
+
+def test_accept_and_dismiss_portfolio_executive_summary_drafts(app):
+    _seed_portfolio_signals(app)
+    with app.state.session_factory() as session:
+        draft = create_portfolio_summary_draft(session, date(2026, 3, 23), settings=app.state.settings)
+        accepted = accept_portfolio_summary_draft(
+            session,
+            draft,
+            final_payload={
+                **(generate_portfolio_executive_summary(session, date(2026, 3, 23), settings=app.state.settings)),
+                "overall_status": "PM final: watch two slips; decisions due this week.",
+            },
+        )
+        dismissed = dismiss_portfolio_summary_draft(
+            session,
+            create_portfolio_summary_draft(session, date(2026, 3, 30), settings=app.state.settings),
+        )
+
+    assert accepted.status == "accepted"
+    assert accepted.final_payload
+    assert "PM final" in accepted.final_payload
+    assert dismissed.status == "dismissed"

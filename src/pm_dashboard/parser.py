@@ -29,6 +29,9 @@ class ParsedTask:
     milestone_flag: bool
     predecessor_refs: Optional[str]
     notes: Optional[str]
+    resource_names: list[str]
+    primary_owner: Optional[str]
+    resource_key: Optional[str]
 
 
 @dataclass(frozen=True)
@@ -49,9 +52,34 @@ def _coerce_milestone_flag(item: dict, start_date: Optional[date], finish_date: 
     return bool(start_date and finish_date and start_date == finish_date)
 
 
+def _normalize_resource_key(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    return "".join(char.lower() for char in value if char.isalnum())
+
+
+def _coerce_resource_names(item: dict) -> list[str]:
+    raw = item.get("resource_names")
+    if raw is None:
+        raw = item.get("resources")
+    if raw is None:
+        raw = item.get("resource_name")
+
+    if isinstance(raw, str):
+        parts = [segment.strip() for segment in raw.replace(";", ",").split(",")]
+    elif isinstance(raw, list):
+        parts = [str(segment).strip() for segment in raw]
+    else:
+        return []
+    return [part for part in parts if part]
+
+
 def _coerce_task(item: dict) -> ParsedTask:
     start_date = _parse_date(item.get("start_date"))
     finish_date = _parse_date(item.get("finish_date"))
+    resource_names = _coerce_resource_names(item)
+    primary_owner = item.get("primary_owner") or (resource_names[0] if resource_names else None)
+    resource_key = item.get("resource_key") or _normalize_resource_key(primary_owner)
 
     return ParsedTask(
         unique_id=item.get("unique_id"),
@@ -67,6 +95,9 @@ def _coerce_task(item: dict) -> ParsedTask:
         milestone_flag=_coerce_milestone_flag(item, start_date=start_date, finish_date=finish_date),
         predecessor_refs=item.get("predecessor_refs"),
         notes=item.get("notes"),
+        resource_names=resource_names,
+        primary_owner=primary_owner,
+        resource_key=resource_key,
     )
 
 

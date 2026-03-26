@@ -34,12 +34,14 @@ def confidence_score(
     material_slips: int,
     overdue_critical_tasks: int,
     overdue_actions: int,
+    overdue_dependencies: int = 0,
     stale_plan: bool,
 ) -> int:
     score = 100
     score -= material_slips * 15
     score -= overdue_critical_tasks * 10
     score -= overdue_actions * 8
+    score -= overdue_dependencies * 6
     if stale_plan:
         score -= 20
     return clamp(score)
@@ -58,6 +60,7 @@ def attention_score(
     material_slips: int,
     overdue_critical_tasks: int,
     overdue_actions: int,
+    overdue_dependencies: int = 0,
     stale_plan: bool,
     upcoming_milestones: int,
 ) -> int:
@@ -65,6 +68,7 @@ def attention_score(
         material_slips * 10
         + overdue_critical_tasks * 6
         + overdue_actions * 4
+        + overdue_dependencies * 5
         + upcoming_milestones * 2
         + (12 if stale_plan else 0)
     )

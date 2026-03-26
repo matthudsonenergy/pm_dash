@@ -30,6 +30,9 @@ def fake_parsed_project(finish: date) -> ParsedProject:
                 milestone_flag=True,
                 predecessor_refs=None,
                 notes="Primary milestone",
+                resource_names=[],
+                primary_owner=None,
+                resource_key=None,
             ),
             ParsedTask(
                 unique_id=2,
@@ -45,6 +48,9 @@ def fake_parsed_project(finish: date) -> ParsedProject:
                 milestone_flag=False,
                 predecessor_refs="1:FS",
                 notes=None,
+                resource_names=[],
+                primary_owner=None,
+                resource_key=None,
             ),
         ],
     )

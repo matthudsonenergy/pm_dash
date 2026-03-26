@@ -18,13 +18,17 @@ from .services import (
     RiskCreate,
     WeeklyUpdateCreate,
     accept_suggestion,
+    accept_portfolio_summary_draft,
     attention_queue,
     cockpit_view,
     create_action,
     create_decision,
     create_risk,
+    dependencies_view,
     current_week_start,
+    detect_resource_conflicts,
     dismiss_suggestion,
+    dismiss_portfolio_summary_draft,
     get_action_or_404,
     get_decision_or_404,
     get_project_or_404,
@@ -35,12 +39,14 @@ from .services import (
     import_schedule,
     parse_date,
     portfolio_view,
+    create_portfolio_summary_draft,
     project_detail,
     project_workflow_view,
     save_upload,
     serialize_decision,
     serialize_risk,
     serialize_suggestion,
+    serialize_portfolio_summary_draft,
     serialize_weekly_update,
     truthy,
     update_action_status,
@@ -48,6 +54,7 @@ from .services import (
     update_risk,
     update_weekly_update,
     upsert_weekly_update,
+    get_portfolio_summary_draft_or_404,
 )
 
 
@@ -111,12 +118,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     def portfolio_page(request: Request, session=Depends(get_session)):
         projects = portfolio_view(session, settings=app.state.settings)
+        resource_conflicts = detect_resource_conflicts(session, settings=app.state.settings)
         return templates.TemplateResponse(
             request,
             "portfolio.html",
             {
                 **base_context(request),
                 "projects": projects,
+                "resource_conflicts": resource_conflicts,
                 "projects_nav": list_projects(session),
             },
         )
@@ -179,6 +188,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/dependencies", response_class=HTMLResponse)
+    def dependencies_page(request: Request, session=Depends(get_session)):
+        dependency_data = dependencies_view(session)
+        return templates.TemplateResponse(
+            request,
+            "dependencies.html",
+            {
+                **base_context(request),
+                "dependency_data": dependency_data,
+                "projects_nav": list_projects(session),
+            },
+        )
+
     @app.get("/admin/imports", response_class=HTMLResponse)
     def imports_page(request: Request, session=Depends(get_session)):
         return templates.TemplateResponse(
@@ -198,6 +220,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def projects_api(session=Depends(get_session)):
         return portfolio_view(session, settings=app.state.settings)
 
+    @app.get("/api/portfolio/resource-conflicts")
+    def resource_conflicts_api(session=Depends(get_session)):
+        return detect_resource_conflicts(session, settings=app.state.settings)
+
     @app.get("/api/projects/{project_id}")
     def project_api(project_id: int, session=Depends(get_session)):
         project = get_project_or_404(session, project_id)
@@ -207,6 +233,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def cockpit_api(week_start: str | None = None, session=Depends(get_session)):
         selected_week = parse_date(week_start) or current_week_start()
         return cockpit_view(session, settings=app.state.settings, week_start=selected_week)
+
+    @app.get("/api/dependencies")
+    def dependencies_api(project_id: int | None = None, session=Depends(get_session)):
+        return dependencies_view(session, project_id=project_id)
 
     @app.post("/api/projects/{project_id}/actions")
     async def create_action_api(project_id: int, request: Request, session=Depends(get_session)):
@@ -298,6 +328,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         suggestion = get_suggestion_or_404(session, suggestion_id)
         suggestion = dismiss_suggestion(session, suggestion)
         return serialize_suggestion(suggestion)
+
+    @app.post("/api/portfolio/executive-summary/generate")
+    def generate_executive_summary_api(week_start: str | None = None, session=Depends(get_session)):
+        selected_week = parse_date(week_start) or current_week_start()
+        draft = create_portfolio_summary_draft(session, selected_week, settings=app.state.settings)
+        return serialize_portfolio_summary_draft(draft)
+
+    @app.post("/api/portfolio/executive-summary/{draft_id}/accept")
+    async def accept_executive_summary_api(draft_id: int, request: Request, session=Depends(get_session)):
+        draft = get_portfolio_summary_draft_or_404(session, draft_id)
+        data = await request_data(request)
+        final_payload = data.get("final_payload") if isinstance(data.get("final_payload"), dict) else None
+        draft = accept_portfolio_summary_draft(session, draft, final_payload=final_payload)
+        return serialize_portfolio_summary_draft(draft)
+
+    @app.post("/api/portfolio/executive-summary/{draft_id}/dismiss")
+    def dismiss_executive_summary_api(draft_id: int, session=Depends(get_session)):
+        draft = get_portfolio_summary_draft_or_404(session, draft_id)
+        draft = dismiss_portfolio_summary_draft(session, draft)
+        return serialize_portfolio_summary_draft(draft)
 
     @app.post("/api/projects/{project_id}/risks")
     async def create_risk_api(project_id: int, request: Request, session=Depends(get_session)):

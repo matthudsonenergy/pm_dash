@@ -34,6 +34,16 @@ class Project(Base):
     risks: Mapped[list["RiskItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     decisions: Mapped[list["DecisionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     suggestions: Mapped[list["SuggestionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    upstream_dependencies: Mapped[list["ProjectDependency"]] = relationship(
+        back_populates="upstream_project",
+        cascade="all, delete-orphan",
+        foreign_keys="ProjectDependency.upstream_project_id",
+    )
+    downstream_dependencies: Mapped[list["ProjectDependency"]] = relationship(
+        back_populates="downstream_project",
+        cascade="all, delete-orphan",
+        foreign_keys="ProjectDependency.downstream_project_id",
+    )
 
 
 class ScheduleSnapshot(Base):
@@ -75,6 +85,9 @@ class Task(Base):
     milestone_flag: Mapped[bool] = mapped_column(Boolean(), default=False)
     predecessor_refs: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    resource_names: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    primary_owner: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    resource_key: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
 
     snapshot: Mapped["ScheduleSnapshot"] = relationship(back_populates="tasks")
 
@@ -220,3 +233,36 @@ class SuggestionItem(Base):
 
     project: Mapped["Project"] = relationship(back_populates="suggestions")
     weekly_update: Mapped[Optional["WeeklyUpdate"]] = relationship(back_populates="suggestions")
+
+class ProjectDependency(Base):
+    __tablename__ = "project_dependencies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    upstream_project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    downstream_project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    upstream_task_ref: Mapped[str] = mapped_column(String(200), index=True)
+    downstream_task_ref: Mapped[str] = mapped_column(String(200), index=True)
+    needed_by_date: Mapped[Optional[date]] = mapped_column(Date(), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="open", index=True)
+    owner: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    source: Mapped[str] = mapped_column(String(40), default="import", index=True)
+
+    upstream_project: Mapped["Project"] = relationship(
+        back_populates="upstream_dependencies", foreign_keys=[upstream_project_id]
+    )
+    downstream_project: Mapped["Project"] = relationship(
+        back_populates="downstream_dependencies", foreign_keys=[downstream_project_id]
+    )
+
+
+class PortfolioSummaryDraft(Base):
+    __tablename__ = "portfolio_summary_drafts"
+    __table_args__ = (UniqueConstraint("week_start", "status", name="uq_portfolio_summary_drafts_week_status"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    week_start: Mapped[date] = mapped_column(Date(), index=True)
+    draft_payload: Mapped[str] = mapped_column(Text())
+    final_payload: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
