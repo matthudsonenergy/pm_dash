@@ -53,10 +53,14 @@ Primary environment variables:
 
 - `PM_DASH_DATA_DIR`: persistent data directory (default: `./data`)
 - `PM_DASH_DB_PATH`: SQLite database path (default: `<PM_DASH_DATA_DIR>/pm_dashboard.db`)
-- `PM_DASH_AUTH_USERNAME`: optional HTTP Basic username for app access
-- `PM_DASH_AUTH_PASSWORD`: optional HTTP Basic password for app access
+- `PM_DASH_EDITOR_USERNAME`: optional HTTP Basic username for editor access
+- `PM_DASH_EDITOR_PASSWORD`: optional HTTP Basic password for editor access
+- `PM_DASH_VIEWER_USERNAME`: optional HTTP Basic username for view-only access
+- `PM_DASH_VIEWER_PASSWORD`: optional HTTP Basic password for view-only access
+- `PM_DASH_AUTH_USERNAME`: legacy fallback for editor username
+- `PM_DASH_AUTH_PASSWORD`: legacy fallback for editor password
 
-Authentication is disabled unless both auth variables are set.
+Authentication is disabled unless at least one complete credential pair is set. Viewer credentials can browse all read-only pages and GET APIs, while editor credentials are required for uploads and all write actions.
 
 ## Current Feature Set
 
@@ -153,8 +157,10 @@ This repo includes a production `Dockerfile` for Railway. The lowest-cost deploy
 ```bash
 PM_DASH_DATA_DIR=/data
 PM_DASH_DB_PATH=/data/pm_dashboard.db
-PM_DASH_AUTH_USERNAME=your_username
-PM_DASH_AUTH_PASSWORD=your_password
+PM_DASH_EDITOR_USERNAME=your_editor_username
+PM_DASH_EDITOR_PASSWORD=your_editor_password
+PM_DASH_VIEWER_USERNAME=your_team_username
+PM_DASH_VIEWER_PASSWORD=your_team_password
 ```
 
 4. Deploy the service. The container starts with:

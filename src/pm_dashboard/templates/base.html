@@ -19,7 +19,9 @@
           <a href="/cockpit">Weekly Cockpit</a>
           <a href="/attention">Attention Queue</a>
           <a href="/dependencies">Dependencies</a>
-          <a href="/admin/imports">Imports</a>
+          {% if can_edit %}
+            <a href="/admin/imports">Imports</a>
+          {% endif %}
         </nav>
         <div class="project-nav">
           <p class="section-label">Projects</p>

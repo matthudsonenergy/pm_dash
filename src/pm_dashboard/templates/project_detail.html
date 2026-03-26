@@ -133,13 +133,17 @@
 
     <article class="panel">
       <h3>Actions</h3>
-      <form id="action-form" class="stack-form" data-project-id="{{ project.id }}">
-        <input name="title" placeholder="Action title" required>
-        <input name="owner" placeholder="Owner" required>
-        <input name="due_date" type="date">
-        <textarea name="notes" placeholder="Notes"></textarea>
-        <button type="submit">Add Action</button>
-      </form>
+      {% if can_edit %}
+        <form id="action-form" class="stack-form" data-project-id="{{ project.id }}">
+          <input name="title" placeholder="Action title" required>
+          <input name="owner" placeholder="Owner" required>
+          <input name="due_date" type="date">
+          <textarea name="notes" placeholder="Notes"></textarea>
+          <button type="submit">Add Action</button>
+        </form>
+      {% else %}
+        <p class="helper">View-only mode. Editors can add and close actions.</p>
+      {% endif %}
 
       <div class="table-wrap">
         <table>
@@ -160,7 +164,7 @@
                 <td>{{ action.due_date or "N/A" }}</td>
                 <td>{{ action.status }}</td>
                 <td>
-                  {% if action.status != "done" %}
+                  {% if can_edit and action.status != "done" %}
                     <button class="ghost-btn action-complete" data-action-id="{{ action.id }}">Mark Done</button>
                   {% endif %}
                 </td>

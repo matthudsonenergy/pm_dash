@@ -15,19 +15,23 @@
   <section class="two-up">
     <article class="panel">
       <h3>Weekly Update</h3>
-      <form id="weekly-update-form" class="stack-form" data-project-id="{{ project.id }}">
-        <input type="date" name="week_start" value="{{ workflow.selected_week_start }}" required>
-        <textarea name="status_summary" placeholder="Status summary">{{ workflow.weekly_update.status_summary if workflow.weekly_update else "" }}</textarea>
-        <textarea name="blockers" placeholder="Blockers, one per line">{{ workflow.weekly_update.blockers if workflow.weekly_update else "" }}</textarea>
-        <textarea name="approvals_needed" placeholder="Approvals needed, one per line">{{ workflow.weekly_update.approvals_needed if workflow.weekly_update else "" }}</textarea>
-        <textarea name="follow_ups" placeholder="Follow-ups, one per line">{{ workflow.weekly_update.follow_ups if workflow.weekly_update else "" }}</textarea>
-        <textarea name="confidence_note" placeholder="Confidence note">{{ workflow.weekly_update.confidence_note if workflow.weekly_update else "" }}</textarea>
-        <textarea name="meeting_notes" placeholder="Meeting notes">{{ workflow.weekly_update.meeting_notes if workflow.weekly_update else "" }}</textarea>
-        <textarea name="status_notes" placeholder="Status notes">{{ workflow.weekly_update.status_notes if workflow.weekly_update else "" }}</textarea>
-        <label class="checkbox-row"><input type="checkbox" name="needs_escalation" {% if workflow.weekly_update and workflow.weekly_update.needs_escalation %}checked{% endif %}> Needs escalation</label>
-        <label class="checkbox-row"><input type="checkbox" name="leadership_watch" {% if workflow.weekly_update and workflow.weekly_update.leadership_watch %}checked{% endif %}> Leadership watch</label>
-        <button type="submit">Save weekly update</button>
-      </form>
+      {% if can_edit %}
+        <form id="weekly-update-form" class="stack-form" data-project-id="{{ project.id }}">
+          <input type="date" name="week_start" value="{{ workflow.selected_week_start }}" required>
+          <textarea name="status_summary" placeholder="Status summary">{{ workflow.weekly_update.status_summary if workflow.weekly_update else "" }}</textarea>
+          <textarea name="blockers" placeholder="Blockers, one per line">{{ workflow.weekly_update.blockers if workflow.weekly_update else "" }}</textarea>
+          <textarea name="approvals_needed" placeholder="Approvals needed, one per line">{{ workflow.weekly_update.approvals_needed if workflow.weekly_update else "" }}</textarea>
+          <textarea name="follow_ups" placeholder="Follow-ups, one per line">{{ workflow.weekly_update.follow_ups if workflow.weekly_update else "" }}</textarea>
+          <textarea name="confidence_note" placeholder="Confidence note">{{ workflow.weekly_update.confidence_note if workflow.weekly_update else "" }}</textarea>
+          <textarea name="meeting_notes" placeholder="Meeting notes">{{ workflow.weekly_update.meeting_notes if workflow.weekly_update else "" }}</textarea>
+          <textarea name="status_notes" placeholder="Status notes">{{ workflow.weekly_update.status_notes if workflow.weekly_update else "" }}</textarea>
+          <label class="checkbox-row"><input type="checkbox" name="needs_escalation" {% if workflow.weekly_update and workflow.weekly_update.needs_escalation %}checked{% endif %}> Needs escalation</label>
+          <label class="checkbox-row"><input type="checkbox" name="leadership_watch" {% if workflow.weekly_update and workflow.weekly_update.leadership_watch %}checked{% endif %}> Leadership watch</label>
+          <button type="submit">Save weekly update</button>
+        </form>
+      {% else %}
+        <p class="helper">View-only mode. Editors can update the weekly workflow.</p>
+      {% endif %}
     </article>
 
     <article class="panel">
@@ -77,8 +81,10 @@
                 <td>{{ item.title }}</td>
                 <td>{{ item.rationale }}</td>
                 <td class="action-cell">
-                  <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="accept">Accept</button>
-                  <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="dismiss">Dismiss</button>
+                  {% if can_edit %}
+                    <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="accept">Accept</button>
+                    <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="dismiss">Dismiss</button>
+                  {% endif %}
                 </td>
               </tr>
             {% else %}
@@ -104,13 +110,17 @@
   <section class="two-up">
     <article class="panel">
       <h3>Risk Register</h3>
-      <form id="risk-form" class="stack-form" data-project-id="{{ project.id }}">
-        <input name="title" placeholder="Risk title" required>
-        <input name="severity" placeholder="Severity (low/medium/high/critical)" value="medium">
-        <input name="trend" placeholder="Trend (steady/new/worsening/improving)" value="steady">
-        <textarea name="description" placeholder="Description"></textarea>
-        <button type="submit">Add Risk</button>
-      </form>
+      {% if can_edit %}
+        <form id="risk-form" class="stack-form" data-project-id="{{ project.id }}">
+          <input name="title" placeholder="Risk title" required>
+          <input name="severity" placeholder="Severity (low/medium/high/critical)" value="medium">
+          <input name="trend" placeholder="Trend (steady/new/worsening/improving)" value="steady">
+          <textarea name="description" placeholder="Description"></textarea>
+          <button type="submit">Add Risk</button>
+        </form>
+      {% else %}
+        <p class="helper">View-only mode. Editors can add risks.</p>
+      {% endif %}
       <div class="table-wrap">
         <table>
           <thead>
@@ -139,13 +149,17 @@
 
     <article class="panel">
       <h3>Decision Log</h3>
-      <form id="decision-form" class="stack-form" data-project-id="{{ project.id }}">
-        <input name="summary" placeholder="Decision summary" required>
-        <input name="owner" placeholder="Owner">
-        <input type="date" name="due_date">
-        <textarea name="context" placeholder="Context"></textarea>
-        <button type="submit">Add Decision</button>
-      </form>
+      {% if can_edit %}
+        <form id="decision-form" class="stack-form" data-project-id="{{ project.id }}">
+          <input name="summary" placeholder="Decision summary" required>
+          <input name="owner" placeholder="Owner">
+          <input type="date" name="due_date">
+          <textarea name="context" placeholder="Context"></textarea>
+          <button type="submit">Add Decision</button>
+        </form>
+      {% else %}
+        <p class="helper">View-only mode. Editors can add decisions.</p>
+      {% endif %}
       <div class="table-wrap">
         <table>
           <thead>

@@ -30,4 +30,10 @@ def app(settings: Settings):
 
 @pytest.fixture
 def auth_settings(settings: Settings) -> Settings:
-    return replace(settings, auth_username="pm", auth_password="secret")
+    return replace(
+        settings,
+        editor_username="pm",
+        editor_password="secret",
+        viewer_username="team",
+        viewer_password="readonly",
+    )

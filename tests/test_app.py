@@ -6,20 +6,26 @@ from datetime import date, timedelta
 from io import BytesIO
 from types import SimpleNamespace
 
+import pytest
 from starlette.requests import Request
 from starlette.datastructures import UploadFile
 
-from pm_dashboard.main import create_app, request_is_authorized
+from fastapi import HTTPException
+
+from pm_dashboard.main import create_app, request_access_role, request_is_authorized
 from pm_dashboard.models import Project
 from pm_dashboard.services import ActionCreate, create_action
 
 
-def make_request(app, path: str = "/") -> Request:
+def make_request(app, path: str = "/", headers: dict[str, str] | None = None, method: str = "GET") -> Request:
+    raw_headers = []
+    for key, value in (headers or {}).items():
+        raw_headers.append((key.lower().encode("latin-1"), value.encode("latin-1")))
     scope = {
         "type": "http",
-        "method": "GET",
+        "method": method,
         "path": path,
-        "headers": [],
+        "headers": raw_headers,
         "scheme": "http",
         "server": ("testserver", 80),
         "client": ("127.0.0.1", 12345),
@@ -108,8 +114,50 @@ def test_auth_allows_valid_credentials(auth_settings):
     assert request_is_authorized(basic_auth_headers()["Authorization"], auth_settings) is True
 
 
+def test_auth_allows_viewer_credentials(auth_settings):
+    assert request_is_authorized(basic_auth_headers(username="team", password="readonly")["Authorization"], auth_settings)
+
+
+def test_auth_resolves_access_roles(auth_settings):
+    assert request_access_role(basic_auth_headers()["Authorization"], auth_settings) == "editor"
+    assert request_access_role(
+        basic_auth_headers(username="team", password="readonly")["Authorization"], auth_settings
+    ) == "viewer"
+
+
 def test_auth_rejects_invalid_credentials(auth_settings):
     assert request_is_authorized(basic_auth_headers(password="wrong")["Authorization"], auth_settings) is False
+
+
+def test_imports_page_requires_editor(auth_settings):
+    app = create_app(auth_settings)
+    route = route_for(app, "/admin/imports")
+    request = make_request(
+        app,
+        "/admin/imports",
+        headers=basic_auth_headers(username="team", password="readonly"),
+    )
+    with app.state.session_factory() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            route.endpoint(request=request, session=session)
+
+    assert exc_info.value.status_code == 403
+
+
+def test_create_action_requires_editor(auth_settings):
+    app = create_app(auth_settings)
+    route = route_for(app, "/api/projects/{project_id}/actions")
+    request = make_request(
+        app,
+        "/api/projects/1/actions",
+        headers=basic_auth_headers(username="team", password="readonly"),
+        method="POST",
+    )
+    with app.state.session_factory() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(route.endpoint(project_id=1, request=request, session=session))
+
+    assert exc_info.value.status_code == 403
 
 
 def test_multi_file_import_endpoint_imports_each_file(monkeypatch, app):

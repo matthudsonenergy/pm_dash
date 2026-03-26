@@ -4,6 +4,7 @@ import base64
 import secrets
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -63,26 +64,44 @@ from .services import (
 )
 
 
+AccessRole = Literal["editor", "viewer"]
+
+
+def auth_accounts(settings: Settings) -> list[tuple[AccessRole, str, str]]:
+    editor_username = settings.editor_username or settings.auth_username
+    editor_password = settings.editor_password or settings.auth_password
+    accounts: list[tuple[AccessRole, str, str]] = []
+    if editor_username and editor_password:
+        accounts.append(("editor", editor_username, editor_password))
+    if settings.viewer_username and settings.viewer_password:
+        accounts.append(("viewer", settings.viewer_username, settings.viewer_password))
+    return accounts
+
+
 def auth_enabled(settings: Settings) -> bool:
-    return bool(settings.auth_username and settings.auth_password)
+    return bool(auth_accounts(settings))
 
 
-def request_is_authorized(authorization_header: str | None, settings: Settings) -> bool:
+def request_access_role(authorization_header: str | None, settings: Settings) -> AccessRole | None:
     if not auth_enabled(settings):
-        return True
+        return "editor"
     if not authorization_header or not authorization_header.startswith("Basic "):
-        return False
+        return None
     try:
         decoded = base64.b64decode(authorization_header.split(" ", 1)[1]).decode("utf-8")
     except Exception:
-        return False
+        return None
     username, separator, password = decoded.partition(":")
     if not separator:
-        return False
-    return secrets.compare_digest(username, settings.auth_username or "") and secrets.compare_digest(
-        password,
-        settings.auth_password or "",
-    )
+        return None
+    for role, expected_username, expected_password in auth_accounts(settings):
+        if secrets.compare_digest(username, expected_username) and secrets.compare_digest(password, expected_password):
+            return role
+    return None
+
+
+def request_is_authorized(authorization_header: str | None, settings: Settings) -> bool:
+    return request_access_role(authorization_header, settings) is not None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -116,7 +135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def require_basic_auth(request: Request, call_next):
         if request.url.path == "/healthz":
             return await call_next(request)
-        if request_is_authorized(request.headers.get("authorization"), settings):
+        if request_access_role(request.headers.get("authorization"), settings):
             return await call_next(request)
         return unauthorized_response(request)
 
@@ -127,11 +146,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             session.close()
 
+    def request_role(request: Request) -> AccessRole:
+        role = request_access_role(request.headers.get("authorization"), settings)
+        return role or "viewer"
+
+    def require_editor(request: Request) -> None:
+        if request_role(request) != "editor":
+            raise HTTPException(status_code=403, detail="Editor access required")
+
     def base_context(request: Request):
+        role = request_role(request)
         return {
             "request": request,
             "today": date.today().isoformat(),
             "current_week_start": current_week_start().isoformat(),
+            "access_role": role,
+            "can_edit": role == "editor",
         }
 
     async def request_data(request: Request) -> dict:
@@ -256,6 +286,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/admin/imports", response_class=HTMLResponse)
     def imports_page(request: Request, session=Depends(get_session)):
+        require_editor(request)
         return templates.TemplateResponse(
             request,
             "imports.html",
@@ -295,6 +326,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/projects/{project_id}/actions")
     async def create_action_api(project_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         project = get_project_or_404(session, project_id)
         data = await request_data(request)
         due_date = parse_date(data.get("due_date"))
@@ -322,6 +354,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/actions/{action_id}")
     async def update_action_api(action_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         action = get_action_or_404(session, action_id)
         data = await request_data(request)
         status = data.get("status")
@@ -332,6 +365,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/projects/{project_id}/weekly-updates")
     async def create_weekly_update_api(project_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         project = get_project_or_404(session, project_id)
         data = await request_data(request)
         weekly_update = upsert_weekly_update(
@@ -344,6 +378,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/weekly-updates/{update_id}")
     async def update_weekly_update_api(update_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         weekly_update = get_weekly_update_or_404(session, update_id)
         data = await request_data(request)
         payload = weekly_update_payload_from_data(
@@ -372,6 +407,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/suggestions/{suggestion_id}/accept")
     async def accept_suggestion_api(suggestion_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         suggestion = get_suggestion_or_404(session, suggestion_id)
         data = await request_data(request)
         payload_override = data.get("payload") if isinstance(data.get("payload"), dict) else None
@@ -379,19 +415,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return serialize_suggestion(suggestion)
 
     @app.post("/api/suggestions/{suggestion_id}/dismiss")
-    def dismiss_suggestion_api(suggestion_id: int, session=Depends(get_session)):
+    def dismiss_suggestion_api(suggestion_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         suggestion = get_suggestion_or_404(session, suggestion_id)
         suggestion = dismiss_suggestion(session, suggestion)
         return serialize_suggestion(suggestion)
 
     @app.post("/api/portfolio/executive-summary/generate")
-    def generate_executive_summary_api(week_start: str | None = None, session=Depends(get_session)):
+    def generate_executive_summary_api(request: Request, week_start: str | None = None, session=Depends(get_session)):
+        require_editor(request)
         selected_week = parse_date(week_start) or current_week_start()
         draft = create_portfolio_summary_draft(session, selected_week, settings=app.state.settings)
         return serialize_portfolio_summary_draft(draft)
 
     @app.post("/api/portfolio/executive-summary/{draft_id}/accept")
     async def accept_executive_summary_api(draft_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         draft = get_portfolio_summary_draft_or_404(session, draft_id)
         data = await request_data(request)
         final_payload = data.get("final_payload") if isinstance(data.get("final_payload"), dict) else None
@@ -399,13 +438,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return serialize_portfolio_summary_draft(draft)
 
     @app.post("/api/portfolio/executive-summary/{draft_id}/dismiss")
-    def dismiss_executive_summary_api(draft_id: int, session=Depends(get_session)):
+    def dismiss_executive_summary_api(draft_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         draft = get_portfolio_summary_draft_or_404(session, draft_id)
         draft = dismiss_portfolio_summary_draft(session, draft)
         return serialize_portfolio_summary_draft(draft)
 
     @app.post("/api/projects/{project_id}/risks")
     async def create_risk_api(project_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         project = get_project_or_404(session, project_id)
         data = await request_data(request)
         risk = create_risk(
@@ -428,6 +469,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/risks/{risk_id}")
     async def update_risk_api(risk_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         risk = get_risk_or_404(session, risk_id)
         data = await request_data(request)
         risk = update_risk(
@@ -450,6 +492,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/projects/{project_id}/decisions")
     async def create_decision_api(project_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         project = get_project_or_404(session, project_id)
         data = await request_data(request)
         decision = create_decision(
@@ -469,6 +512,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.patch("/api/decisions/{decision_id}")
     async def update_decision_api(decision_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
         decision = get_decision_or_404(session, decision_id)
         data = await request_data(request)
         decision = update_decision(
@@ -493,6 +537,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         files: list[UploadFile] = File(...),
         session=Depends(get_session),
     ):
+        require_editor(request)
         if not files:
             return JSONResponse(status_code=400, content={"error": "At least one .mpp file is required"})
 
