@@ -60,6 +60,7 @@ class ScheduleSnapshot(Base):
     task_count: Mapped[int] = mapped_column(Integer(), default=0)
     milestone_count: Mapped[int] = mapped_column(Integer(), default=0)
     critical_task_count: Mapped[int] = mapped_column(Integer(), default=0)
+    task_diff_viewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
 
     project: Mapped["Project"] = relationship(back_populates="snapshots")
     tasks: Mapped[list["Task"]] = relationship(back_populates="snapshot", cascade="all, delete-orphan")

@@ -40,6 +40,9 @@ def _reconcile_sqlite_schema(engine) -> None:
             "primary_owner": "VARCHAR(150)",
             "resource_key": "VARCHAR(120)",
         },
+        "schedule_snapshots": {
+            "task_diff_viewed_at": "DATETIME",
+        },
     }
     index_specs = {
         "tasks": {

@@ -14,8 +14,9 @@
       <h3>Upload .mpp</h3>
       <form id="import-form" class="stack-form">
         <label>
-          Project
-          <select name="project_id" required>
+          Project override
+          <select name="project_id">
+            <option value="">Auto-detect from file name</option>
             {% for project in projects %}
               <option value="{{ project.id }}">{{ project.name }}</option>
             {% endfor %}
@@ -27,6 +28,7 @@
         </label>
         <button type="submit">Run Import</button>
       </form>
+      <p class="helper">Uploads are auto-categorized into one of the seven projects from the file name. Use the override only if needed.</p>
       {% if sample_mpp_exists %}
         <p class="helper">Reference sample on disk: <code>{{ sample_mpp }}</code></p>
       {% else %}
@@ -91,7 +93,8 @@
       event.preventDefault();
       const formData = new FormData(importForm);
       const projectId = formData.get("project_id");
-      const response = await fetch(`/api/imports/mpp?project_id=${projectId}`, {
+      const query = projectId ? `?project_id=${projectId}` : "";
+      const response = await fetch(`/api/imports/mpp${query}`, {
         method: "POST",
         body: formData,
       });

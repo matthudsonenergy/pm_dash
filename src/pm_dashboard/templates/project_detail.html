@@ -13,6 +13,35 @@
     </div>
   </section>
 
+  {% if detail.task_change_notice %}
+    <section class="panel">
+      <h3>Task Changes In Latest Import</h3>
+      <p class="helper">Shown once for {{ detail.task_change_notice.source_filename }}.</p>
+      <div class="two-up">
+        <div>
+          <h4>New Tasks</h4>
+          <ul class="simple-list">
+            {% for item in detail.task_change_notice.new_tasks %}
+              <li>{{ item }}</li>
+            {% else %}
+              <li>No new tasks in this import.</li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div>
+          <h4>Removed Tasks</h4>
+          <ul class="simple-list">
+            {% for item in detail.task_change_notice.removed_tasks %}
+              <li>{{ item }}</li>
+            {% else %}
+              <li>No removed tasks in this import.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+
   <section class="two-up">
     <article class="panel">
       <h3>Delivery</h3>

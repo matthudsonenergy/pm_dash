@@ -46,6 +46,7 @@ from .services import (
     create_portfolio_summary_draft,
     project_detail,
     project_workflow_view,
+    resolve_project_for_import,
     save_upload,
     serialize_decision,
     serialize_risk,
@@ -199,7 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/projects/{project_id}", response_class=HTMLResponse)
     def project_page(project_id: int, request: Request, session=Depends(get_session)):
         project = get_project_or_404(session, project_id)
-        detail = project_detail(session, project, settings=app.state.settings)
+        detail = project_detail(session, project, settings=app.state.settings, consume_task_diff=True)
         return templates.TemplateResponse(
             request,
             "project_detail.html",
@@ -488,24 +489,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/imports/mpp")
     async def import_api(
         request: Request,
-        project_id: int,
+        project_id: int | None = None,
         file: UploadFile = File(...),
         session=Depends(get_session),
     ):
-        project = get_project_or_404(session, project_id)
+        source_filename = file.filename or ""
+        project = resolve_project_for_import(session, source_filename=source_filename, project_id=project_id)
         saved_file = save_upload(file, app.state.settings)
         try:
             run = import_schedule(
                 session,
                 project,
                 saved_file,
-                source_filename=file.filename or saved_file.name,
+                source_filename=source_filename or saved_file.name,
                 settings=app.state.settings,
             )
             return {
                 "import_run_id": run.id,
                 "status": run.status,
                 "project_id": project.id,
+                "project_name": project.name,
                 "source_filename": run.source_filename,
             }
         except Exception as exc:

@@ -39,6 +39,8 @@ from .projects import (
 from .repository import (
     get_decision,
     get_latest_snapshot,
+    get_project,
+    get_project_by_key,
     get_previous_snapshot,
     get_risk,
     get_suggestion,
@@ -375,6 +377,21 @@ def _refresh_cross_project_dependencies(session, downstream_project: Project, sn
 def infer_project_from_inputs(*values: Optional[str]) -> Optional[str]:
     definition = infer_project_definition(*values)
     return definition.key if definition else None
+
+
+def resolve_project_for_import(session, source_filename: str, project_id: int | None = None) -> Project:
+    project = get_project(session, project_id) if project_id is not None else None
+    if project:
+        return project
+
+    inferred_key = infer_project_from_inputs(source_filename, Path(source_filename).stem)
+    if not inferred_key:
+        raise HTTPException(status_code=400, detail="Could not infer project from file name")
+
+    project = get_project_by_key(session, inferred_key)
+    if not project:
+        raise HTTPException(status_code=400, detail=f"Unknown inferred project key: {inferred_key}")
+    return project
 
 
 def _normalize_resource_key(value: Optional[str]) -> Optional[str]:
@@ -1397,7 +1414,13 @@ def dependencies_view(session, project_id: int | None = None, today: Optional[da
     }
 
 
-def project_detail(session, project: Project, settings: Settings | None = None, today: Optional[date] = None) -> dict:
+def project_detail(
+    session,
+    project: Project,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+    consume_task_diff: bool = False,
+) -> dict:
     settings = settings or get_settings()
     today = today or date.today()
     summary = project_summary(session, project, settings, today=today)
@@ -1409,6 +1432,7 @@ def project_detail(session, project: Project, settings: Settings | None = None, 
     milestones = []
     critical_tasks = []
     slipped_tasks = []
+    task_change_notice = None
 
     if snapshot:
         milestone_rows = list_milestones_for_snapshot(session, snapshot.id)
@@ -1439,7 +1463,25 @@ def project_detail(session, project: Project, settings: Settings | None = None, 
         previous_tasks = {}
         if previous_snapshot:
             previous_tasks = {task.name: task for task in list_tasks_for_snapshot(session, previous_snapshot.id)}
-            for task in list_tasks_for_snapshot(session, snapshot.id):
+            current_tasks = list_tasks_for_snapshot(session, snapshot.id)
+
+            if consume_task_diff and snapshot.task_diff_viewed_at is None:
+                current_task_names = {task.name for task in current_tasks}
+                previous_task_names = set(previous_tasks)
+                new_tasks = sorted(current_task_names - previous_task_names)
+                removed_tasks = sorted(previous_task_names - current_task_names)
+                if new_tasks or removed_tasks:
+                    task_change_notice = {
+                        "snapshot_id": snapshot.id,
+                        "source_filename": snapshot.source_filename,
+                        "imported_at": snapshot.imported_at.isoformat(),
+                        "new_tasks": new_tasks[:25],
+                        "removed_tasks": removed_tasks[:25],
+                    }
+                snapshot.task_diff_viewed_at = datetime.now(UTC)
+                session.commit()
+
+            for task in current_tasks:
                 previous_task = previous_tasks.get(task.name)
                 if not previous_task:
                     continue
@@ -1463,6 +1505,7 @@ def project_detail(session, project: Project, settings: Settings | None = None, 
         "milestones": milestones,
         "critical_tasks": critical_tasks,
         "slipped_tasks": slipped_tasks,
+        "task_change_notice": task_change_notice,
     }
 
 
