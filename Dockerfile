@@ -5,7 +5,7 @@ COPY tools/mpp-parser/pom.xml tools/mpp-parser/pom.xml
 COPY tools/mpp-parser/src tools/mpp-parser/src
 RUN mvn -q -f tools/mpp-parser/pom.xml package
 
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
