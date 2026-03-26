@@ -10,7 +10,6 @@ Requires-Dist: python-multipart>=0.0.22
 Requires-Dist: sqlalchemy>=2.0.48
 Requires-Dist: uvicorn>=0.42.0
 Provides-Extra: dev
-Requires-Dist: httpx>=0.28.1; extra == "dev"
 Requires-Dist: pytest>=9.0.2; extra == "dev"
 
 # PM Dashboard

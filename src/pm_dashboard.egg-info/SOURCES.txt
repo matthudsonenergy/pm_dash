@@ -17,6 +17,15 @@ src/pm_dashboard.egg-info/SOURCES.txt
 src/pm_dashboard.egg-info/dependency_links.txt
 src/pm_dashboard.egg-info/requires.txt
 src/pm_dashboard.egg-info/top_level.txt
+src/pm_dashboard/static/style.css
+src/pm_dashboard/templates/attention.html
+src/pm_dashboard/templates/base.html
+src/pm_dashboard/templates/cockpit.html
+src/pm_dashboard/templates/dependencies.html
+src/pm_dashboard/templates/imports.html
+src/pm_dashboard/templates/portfolio.html
+src/pm_dashboard/templates/project_detail.html
+src/pm_dashboard/templates/project_workflow.html
 tests/test_app.py
 tests/test_ingest.py
 tests/test_parser.py
