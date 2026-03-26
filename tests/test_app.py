@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 from datetime import date, timedelta
+from io import BytesIO
+from types import SimpleNamespace
 
 from starlette.requests import Request
+from starlette.datastructures import UploadFile
 
-from pm_dashboard.main import request_is_authorized
+from pm_dashboard.main import create_app, request_is_authorized
 from pm_dashboard.models import Project
 from pm_dashboard.services import ActionCreate, create_action
 
@@ -106,3 +110,62 @@ def test_auth_allows_valid_credentials(auth_settings):
 
 def test_auth_rejects_invalid_credentials(auth_settings):
     assert request_is_authorized(basic_auth_headers(password="wrong")["Authorization"], auth_settings) is False
+
+
+def test_multi_file_import_endpoint_imports_each_file(monkeypatch, app):
+    route = route_for(app, "/api/imports/mpp")
+    imported = []
+
+    def fake_save_upload(upload, settings):
+        return settings.uploads_dir / upload.filename
+
+    def fake_import_schedule(session, project, file_path, source_filename, settings):
+        imported.append((project.key, source_filename))
+
+        return SimpleNamespace(id=len(imported), status="success", source_filename=source_filename)
+
+    monkeypatch.setattr("pm_dashboard.main.save_upload", fake_save_upload)
+    monkeypatch.setattr("pm_dashboard.main.import_schedule", fake_import_schedule)
+
+    upload_a = UploadFile(filename="Atlas_phase1_100h_13Mar-MH.mpp", file=BytesIO(b"a"))
+    upload_b = UploadFile(filename="MPMProject324.mpp", file=BytesIO(b"b"))
+
+    with app.state.session_factory() as session:
+        response = asyncio.run(
+            route.endpoint(
+                request=make_request(app, "/api/imports/mpp"),
+                project_id=None,
+                files=[upload_a, upload_b],
+                session=session,
+            )
+        )
+
+    assert response["count"] == 2
+    assert imported == [("atlas", "Atlas_phase1_100h_13Mar-MH.mpp"), ("mpm", "MPMProject324.mpp")]
+
+
+def test_multi_file_import_endpoint_returns_error_collection(monkeypatch, app):
+    route = route_for(app, "/api/imports/mpp")
+
+    def fake_save_upload(upload, settings):
+        return settings.uploads_dir / upload.filename
+
+    def fake_import_schedule(session, project, file_path, source_filename, settings):
+        raise RuntimeError(f"bad import: {source_filename}")
+
+    monkeypatch.setattr("pm_dashboard.main.save_upload", fake_save_upload)
+    monkeypatch.setattr("pm_dashboard.main.import_schedule", fake_import_schedule)
+
+    upload = UploadFile(filename="Atlas_phase1_100h_13Mar-MH.mpp", file=BytesIO(b"a"))
+
+    with app.state.session_factory() as session:
+        response = asyncio.run(
+            route.endpoint(
+                request=make_request(app, "/api/imports/mpp"),
+                project_id=None,
+                files=[upload],
+                session=session,
+            )
+        )
+
+    assert response.status_code == 400

@@ -154,6 +154,33 @@ a {
   box-shadow: var(--shadow);
 }
 
+.drop-zone {
+  padding: 22px 18px;
+  border: 2px dashed var(--line);
+  border-radius: 16px;
+  background: rgba(22, 32, 38, 0.03);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.drop-zone p {
+  margin: 0;
+}
+
+.drop-zone .helper {
+  margin-top: 6px;
+}
+
+.drop-zone.drag-active,
+.drop-zone:hover,
+.drop-zone:focus {
+  border-color: var(--accent);
+  background: rgba(214, 90, 49, 0.08);
+  transform: translateY(-1px);
+  outline: none;
+}
+
 .tag-row {
   display: flex;
   flex-wrap: wrap;

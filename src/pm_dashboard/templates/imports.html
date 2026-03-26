@@ -23,12 +23,17 @@
           </select>
         </label>
         <label>
-          MS Project file
-          <input name="file" type="file" accept=".mpp" required>
+          MS Project files
+          <div id="drop-zone" class="drop-zone" tabindex="0">
+            <p><strong>Drag and drop `.mpp` files here</strong></p>
+            <p class="helper">or use the file picker below</p>
+          </div>
+          <input id="file-input" name="files" type="file" accept=".mpp" multiple required>
         </label>
         <button type="submit">Run Import</button>
       </form>
       <p class="helper">Uploads are auto-categorized into one of the seven projects from the file name. Use the override only if needed.</p>
+      <p id="selected-files" class="helper">No files selected.</p>
       {% if sample_mpp_exists %}
         <p class="helper">Reference sample on disk: <code>{{ sample_mpp }}</code></p>
       {% else %}
@@ -89,9 +94,57 @@
 
   <script>
     const importForm = document.getElementById("import-form");
+    const fileInput = document.getElementById("file-input");
+    const dropZone = document.getElementById("drop-zone");
+    const selectedFiles = document.getElementById("selected-files");
+
+    function updateSelectedFiles() {
+      const files = Array.from(fileInput.files || []);
+      selectedFiles.textContent = files.length
+        ? `${files.length} file(s): ${files.map((file) => file.name).join(", ")}`
+        : "No files selected.";
+    }
+
+    function syncDroppedFiles(files) {
+      const dataTransfer = new DataTransfer();
+      Array.from(files).forEach((file) => dataTransfer.items.add(file));
+      fileInput.files = dataTransfer.files;
+      updateSelectedFiles();
+    }
+
+    fileInput.addEventListener("change", updateSelectedFiles);
+
+    dropZone.addEventListener("click", () => fileInput.click());
+    dropZone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.add("drag-active");
+      });
+    });
+    ["dragleave", "dragend", "drop"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.remove("drag-active");
+      });
+    });
+    dropZone.addEventListener("drop", (event) => {
+      const files = Array.from(event.dataTransfer.files || []).filter((file) => file.name.endsWith(".mpp"));
+      syncDroppedFiles(files);
+    });
+
     importForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const formData = new FormData(importForm);
+      if (!fileInput.files || !fileInput.files.length) {
+        alert("Select at least one .mpp file");
+        return;
+      }
       const projectId = formData.get("project_id");
       const query = projectId ? `?project_id=${projectId}` : "";
       const response = await fetch(`/api/imports/mpp${query}`, {
@@ -102,7 +155,11 @@
       if (response.ok) {
         window.location.reload();
       } else {
-        alert(payload.error || "Import failed");
+        if (payload.errors) {
+          alert(payload.errors.map((item) => `${item.source_filename}: ${item.error}`).join("\n"));
+        } else {
+          alert(payload.error || "Import failed");
+        }
       }
     });
   </script>

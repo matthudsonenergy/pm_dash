@@ -490,29 +490,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def import_api(
         request: Request,
         project_id: int | None = None,
-        file: UploadFile = File(...),
+        files: list[UploadFile] = File(...),
         session=Depends(get_session),
     ):
-        source_filename = file.filename or ""
-        project = resolve_project_for_import(session, source_filename=source_filename, project_id=project_id)
-        saved_file = save_upload(file, app.state.settings)
-        try:
-            run = import_schedule(
-                session,
-                project,
-                saved_file,
-                source_filename=source_filename or saved_file.name,
-                settings=app.state.settings,
-            )
-            return {
-                "import_run_id": run.id,
-                "status": run.status,
-                "project_id": project.id,
-                "project_name": project.name,
-                "source_filename": run.source_filename,
-            }
-        except Exception as exc:
-            return JSONResponse(status_code=400, content={"error": str(exc), "project_id": project.id})
+        if not files:
+            return JSONResponse(status_code=400, content={"error": "At least one .mpp file is required"})
+
+        results = []
+        errors = []
+
+        for file in files:
+            source_filename = file.filename or ""
+            project = resolve_project_for_import(session, source_filename=source_filename, project_id=project_id)
+            saved_file = save_upload(file, app.state.settings)
+            try:
+                run = import_schedule(
+                    session,
+                    project,
+                    saved_file,
+                    source_filename=source_filename or saved_file.name,
+                    settings=app.state.settings,
+                )
+                results.append(
+                    {
+                        "import_run_id": run.id,
+                        "status": run.status,
+                        "project_id": project.id,
+                        "project_name": project.name,
+                        "source_filename": run.source_filename,
+                    }
+                )
+            except Exception as exc:
+                errors.append(
+                    {
+                        "error": str(exc),
+                        "project_id": project.id,
+                        "project_name": project.name,
+                        "source_filename": source_filename or saved_file.name,
+                    }
+                )
+
+        if errors:
+            return JSONResponse(status_code=400, content={"results": results, "errors": errors})
+
+        return {"results": results, "count": len(results)}
 
     return app
 
