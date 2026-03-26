@@ -5,4 +5,5 @@ sqlalchemy>=2.0.48
 uvicorn>=0.42.0
 
 [dev]
+httpx>=0.28.1
 pytest>=9.0.2

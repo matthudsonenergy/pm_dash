@@ -30,6 +30,12 @@ from .models import (
     WeeklyUpdate,
 )
 from .parser import ParsedProject, ParsedTask, parse_mpp_file
+from .projects import (
+    infer_project_definition,
+    normalize_project_token,
+    project_aliases,
+    project_definition_by_key,
+)
 from .repository import (
     get_decision,
     get_latest_snapshot,
@@ -236,13 +242,12 @@ def import_schedule(
         import_run.status = "success"
         import_run.finished_at = datetime.now(UTC)
 
-        if project.key == "pyrolysis-petal-2026" and project.name.startswith("Project"):
-            project.name = parsed.title
-
         session.commit()
         session.refresh(import_run)
         return import_run
     except Exception as exc:
+        session.rollback()
+        import_run = session.get(ImportRun, import_run.id)
         import_run.status = "failed"
         import_run.error_message = str(exc)
         import_run.finished_at = datetime.now(UTC)
@@ -338,14 +343,20 @@ def _refresh_cross_project_dependencies(session, downstream_project: Project, sn
     ).delete(synchronize_session=False)
 
     tasks = list_tasks_for_snapshot(session, snapshot_id)
-    known_projects = {item.key.lower(): item.id for item in list_projects(session)}
+    known_projects: dict[str, int] = {}
+    for item in list_projects(session):
+        definition = project_definition_by_key(item.key)
+        if definition:
+            for alias in project_aliases(definition):
+                known_projects[alias] = item.id
+        known_projects[item.key.lower()] = item.id
 
     for task in tasks:
         parsed_ref = parse_external_dependency_ref(task.predecessor_refs)
         if not parsed_ref:
             continue
         upstream_key, upstream_task_ref = parsed_ref
-        upstream_project_id = known_projects.get(upstream_key)
+        upstream_project_id = known_projects.get(normalize_project_token(upstream_key))
         if not upstream_project_id or upstream_project_id == downstream_project.id:
             continue
         dependency = ProjectDependency(
@@ -359,6 +370,11 @@ def _refresh_cross_project_dependencies(session, downstream_project: Project, sn
             source="import",
         )
         session.add(dependency)
+
+
+def infer_project_from_inputs(*values: Optional[str]) -> Optional[str]:
+    definition = infer_project_definition(*values)
+    return definition.key if definition else None
 
 
 def _normalize_resource_key(value: Optional[str]) -> Optional[str]:

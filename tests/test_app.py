@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import base64
 from datetime import date, timedelta
 
 from starlette.requests import Request
 
+from pm_dashboard.main import request_is_authorized
 from pm_dashboard.models import Project
 from pm_dashboard.services import ActionCreate, create_action
 
@@ -42,12 +44,12 @@ def test_portfolio_route_loads(app):
     assert response.status_code == 200
     body = response.body.decode("utf-8")
     assert "PM Control Tower" in body
-    assert "Pyrolysis Petal 2026" in body
+    assert "P2C" in body
 
 
 def test_attention_page_shows_overdue_actions(app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         create_action(
             session,
             project,
@@ -72,7 +74,7 @@ def test_attention_page_shows_overdue_actions(app):
 
 def test_mark_action_done_service(app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         action = create_action(
             session,
             project,
@@ -87,3 +89,20 @@ def test_mark_action_done_service(app):
         session.commit()
         session.refresh(action)
         assert action.status == "done"
+
+
+def basic_auth_headers(username: str = "pm", password: str = "secret") -> dict[str, str]:
+    token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    return {"Authorization": f"Basic {token}"}
+
+
+def test_auth_blocks_missing_credentials(auth_settings):
+    assert request_is_authorized(None, auth_settings) is False
+
+
+def test_auth_allows_valid_credentials(auth_settings):
+    assert request_is_authorized(basic_auth_headers()["Authorization"], auth_settings) is True
+
+
+def test_auth_rejects_invalid_credentials(auth_settings):
+    assert request_is_authorized(basic_auth_headers(password="wrong")["Authorization"], auth_settings) is False

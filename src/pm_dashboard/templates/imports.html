@@ -27,7 +27,31 @@
         </label>
         <button type="submit">Run Import</button>
       </form>
-      <p class="helper">Sample file on disk: <code>{{ sample_mpp }}</code></p>
+      {% if sample_mpp_exists %}
+        <p class="helper">Reference sample on disk: <code>{{ sample_mpp }}</code></p>
+      {% else %}
+        <p class="helper">No bundled sample `.mpp` file in this deployment image.</p>
+      {% endif %}
+      {% if repo_mpp_files %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Repo file</th>
+                <th>Detected project</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in repo_mpp_files %}
+                <tr>
+                  <td>{{ item.filename }}</td>
+                  <td>{{ item.project_name or "Unmatched" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
     </article>
 
     <article class="panel">

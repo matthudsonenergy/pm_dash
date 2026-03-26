@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -25,3 +26,8 @@ def settings(tmp_path: Path) -> Settings:
 @pytest.fixture
 def app(settings: Settings):
     return create_app(settings)
+
+
+@pytest.fixture
+def auth_settings(settings: Settings) -> Settings:
+    return replace(settings, auth_username="pm", auth_password="secret")

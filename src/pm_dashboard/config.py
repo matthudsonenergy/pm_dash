@@ -35,6 +35,8 @@ class Settings:
     parser_project_dir: Path
     parser_jar: Path
     sample_mpp: Path
+    auth_username: str | None = None
+    auth_password: str | None = None
     stale_plan_days: int = 7
     upcoming_milestone_days: int = 30
     slip_from_previous_days: int = 3
@@ -56,4 +58,6 @@ def get_settings() -> Settings:
         parser_project_dir=repo_root / "tools" / "mpp-parser",
         parser_jar=repo_root / "tools" / "mpp-parser" / "target" / "mpp-parser-1.0.0.jar",
         sample_mpp=repo_root / "2026 Pyrolysis Petal - 24 Mar 2026.mpp",
+        auth_username=os.getenv("PM_DASH_AUTH_USERNAME"),
+        auth_password=os.getenv("PM_DASH_AUTH_PASSWORD"),
     )

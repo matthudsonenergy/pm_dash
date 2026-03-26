@@ -7,6 +7,7 @@ src/pm_dashboard/ingest.py
 src/pm_dashboard/main.py
 src/pm_dashboard/models.py
 src/pm_dashboard/parser.py
+src/pm_dashboard/projects.py
 src/pm_dashboard/repository.py
 src/pm_dashboard/scoring.py
 src/pm_dashboard/seed.py
@@ -18,4 +19,7 @@ src/pm_dashboard.egg-info/requires.txt
 src/pm_dashboard.egg-info/top_level.txt
 tests/test_app.py
 tests/test_ingest.py
+tests/test_parser.py
 tests/test_parser_integration.py
+tests/test_phase2.py
+tests/test_phase3.py

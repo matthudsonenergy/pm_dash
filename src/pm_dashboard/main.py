@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import base64
+import secrets
 from datetime import date
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
 
 from .config import Settings, get_settings
 from .database import init_db, make_engine, make_session_factory
+from .projects import repo_file_project_rows
 from .repository import list_projects
 from .seed import ensure_seed_projects
 from .services import (
@@ -58,6 +62,28 @@ from .services import (
 )
 
 
+def auth_enabled(settings: Settings) -> bool:
+    return bool(settings.auth_username and settings.auth_password)
+
+
+def request_is_authorized(authorization_header: str | None, settings: Settings) -> bool:
+    if not auth_enabled(settings):
+        return True
+    if not authorization_header or not authorization_header.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(authorization_header.split(" ", 1)[1]).decode("utf-8")
+    except Exception:
+        return False
+    username, separator, password = decoded.partition(":")
+    if not separator:
+        return False
+    return secrets.compare_digest(username, settings.auth_username or "") and secrets.compare_digest(
+        password,
+        settings.auth_password or "",
+    )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="PM Dashboard")
@@ -78,6 +104,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent / "templates"))
     app.state.templates = templates
     app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
+
+    def unauthorized_response(request: Request):
+        headers = {"WWW-Authenticate": 'Basic realm="PM Dashboard"'}
+        if request.url.path.startswith("/api/"):
+            return JSONResponse(status_code=401, content={"detail": "Unauthorized"}, headers=headers)
+        return PlainTextResponse("Unauthorized", status_code=401, headers=headers)
+
+    @app.middleware("http")
+    async def require_basic_auth(request: Request, call_next):
+        if request.url.path == "/healthz":
+            return await call_next(request)
+        if request_is_authorized(request.headers.get("authorization"), settings):
+            return await call_next(request)
+        return unauthorized_response(request)
 
     def get_session():
         session = app.state.session_factory()
@@ -114,6 +154,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             needs_escalation=truthy(data.get("needs_escalation")),
             leadership_watch=truthy(data.get("leadership_watch")),
         )
+
+    @app.get("/healthz")
+    def healthcheck():
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        settings.uploads_dir.mkdir(parents=True, exist_ok=True)
+        with app.state.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return {
+            "status": "ok",
+            "parser_ready": app.state.settings.parser_jar.exists(),
+            "auth_enabled": auth_enabled(settings),
+        }
 
     @app.get("/", response_class=HTMLResponse)
     def portfolio_page(request: Request, session=Depends(get_session)):
@@ -211,6 +263,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "projects": list_projects(session),
                 "runs": import_history(session),
                 "sample_mpp": str(app.state.settings.sample_mpp),
+                "sample_mpp_exists": app.state.settings.sample_mpp.exists(),
+                "repo_mpp_files": repo_file_project_rows(app.state.settings.repo_root),
                 "parser_ready": app.state.settings.parser_jar.exists(),
                 "projects_nav": list_projects(session),
             },

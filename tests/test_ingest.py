@@ -7,7 +7,7 @@ import pytest
 
 from pm_dashboard.models import Project
 from pm_dashboard.parser import ParsedProject, ParsedTask
-from pm_dashboard.services import import_schedule, project_detail, project_summary
+from pm_dashboard.services import import_schedule, infer_project_from_inputs, project_detail, project_summary
 
 
 def fake_parsed_project(finish: date) -> ParsedProject:
@@ -68,7 +68,7 @@ def test_import_creates_snapshot_and_material_slip(monkeypatch, app, settings: P
     monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
 
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
         import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
         summary = project_summary(session, project, settings=app.state.settings, today=date(2026, 3, 25))
@@ -90,10 +90,16 @@ def test_import_failure_is_recorded(monkeypatch, app, tmp_path: Path):
     monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
 
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         with pytest.raises(RuntimeError):
             import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
         latest_run = project.import_runs[-1]
 
     assert latest_run.status == "failed"
     assert "parser exploded" in latest_run.error_message
+
+
+def test_infer_project_from_filename_aliases():
+    assert infer_project_from_inputs("2026 Pyrolysis Petal - 24 Mar 2026.mpp") == "p2c"
+    assert infer_project_from_inputs("Atlas_phase1_100h_13Mar-MH.mpp") == "atlas"
+    assert infer_project_from_inputs("MPMProject324.mpp") == "mpm"

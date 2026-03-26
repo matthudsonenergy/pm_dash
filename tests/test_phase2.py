@@ -79,7 +79,7 @@ def test_weekly_update_generates_suggestions_and_views(monkeypatch, app, tmp_pat
     monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
 
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
         import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
 
@@ -113,7 +113,7 @@ def test_weekly_update_generates_suggestions_and_views(monkeypatch, app, tmp_pat
 
 def test_accept_action_suggestion_creates_action(monkeypatch, app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         weekly_update = upsert_weekly_update(
             session,
             project,
@@ -139,7 +139,7 @@ def test_accept_action_suggestion_creates_action(monkeypatch, app):
 
 def test_risk_and_decision_suggestions_materialize(monkeypatch, app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         weekly_update = upsert_weekly_update(
             session,
             project,
@@ -173,7 +173,7 @@ def test_risk_and_decision_suggestions_materialize(monkeypatch, app):
 
 def test_dismiss_suggestion_leaves_no_downstream_record(app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         weekly_update = upsert_weekly_update(
             session,
             project,
@@ -200,7 +200,7 @@ def test_dismiss_suggestion_leaves_no_downstream_record(app):
 
 def test_duplicate_weekly_update_reuses_same_row(app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         first = upsert_weekly_update(
             session,
             project,
@@ -239,7 +239,7 @@ def test_duplicate_weekly_update_reuses_same_row(app):
 
 def test_attention_queue_includes_phase2_signals(app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         create_risk(
             session,
             project,

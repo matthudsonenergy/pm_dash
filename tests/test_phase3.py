@@ -114,7 +114,7 @@ def _add_snapshot(
 
 def _seed_portfolio_signals(app) -> None:
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         create_risk(
             session,
             project,
@@ -158,7 +158,7 @@ def _parsed_with_external_ref(task_date: date) -> ParsedProject:
                 percent_complete=25.0,
                 critical_flag=True,
                 milestone_flag=False,
-                predecessor_refs="project-2:UP-45",
+                predecessor_refs="atlas:UP-45",
                 notes="waiting on external project",
                 resource_names=[],
                 primary_owner=None,
@@ -202,7 +202,7 @@ def _task(
 def test_health_trend_improving_trajectory(app):
     week_starts = [date(2026, 3, 2), date(2026, 3, 9), date(2026, 3, 16), date(2026, 3, 23)]
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         _seed_weekly_updates(session, project, week_starts, settings=app.state.settings)
         _seed_snapshot(session, project, datetime(2026, 3, 2, 12, 0, tzinfo=UTC), material_slips=4)
         _seed_snapshot(session, project, datetime(2026, 3, 9, 12, 0, tzinfo=UTC), material_slips=3)
@@ -227,7 +227,7 @@ def test_health_trend_improving_trajectory(app):
 def test_health_trend_deteriorating_trajectory(app):
     week_starts = [date(2026, 3, 2), date(2026, 3, 9), date(2026, 3, 16), date(2026, 3, 23)]
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         _seed_weekly_updates(session, project, week_starts, settings=app.state.settings)
         _seed_snapshot(session, project, datetime(2026, 3, 2, 12, 0, tzinfo=UTC), material_slips=1)
         _seed_snapshot(session, project, datetime(2026, 3, 9, 12, 0, tzinfo=UTC), material_slips=2)
@@ -242,7 +242,7 @@ def test_health_trend_deteriorating_trajectory(app):
 
 def test_health_trend_insufficient_history_fallback(app):
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         _seed_weekly_updates(session, project, [date(2026, 3, 23)], settings=app.state.settings)
         _seed_snapshot(session, project, datetime(2026, 3, 23, 12, 0, tzinfo=UTC), material_slips=2)
 
@@ -257,9 +257,9 @@ def test_leadership_surprise_level_transitions(app):
     today = date(2026, 3, 25)
 
     with app.state.session_factory() as session:
-        low_project = session.query(Project).filter(Project.key == "project-2").one()
-        medium_project = session.query(Project).filter(Project.key == "project-3").one()
-        high_project = session.query(Project).filter(Project.key == "project-4").one()
+        low_project = session.query(Project).filter(Project.key == "atlas").one()
+        medium_project = session.query(Project).filter(Project.key == "mpm").one()
+        high_project = session.query(Project).filter(Project.key == "iprd").one()
 
         _add_snapshot(
             session,
@@ -361,7 +361,7 @@ def test_portfolio_filter_and_attention_category_for_leadership_surprise(app):
     today = date(2026, 3, 25)
 
     with app.state.session_factory() as session:
-        high_project = session.query(Project).filter(Project.key == "project-5").one()
+        high_project = session.query(Project).filter(Project.key == "propane-pyrolysis").one()
         _add_snapshot(
             session,
             high_project,
@@ -404,9 +404,9 @@ def test_portfolio_filter_and_attention_category_for_leadership_surprise(app):
         high_only = portfolio_view(session, settings=app.state.settings, today=today, leadership_level="high")
         queue = attention_queue(session, settings=app.state.settings, today=today)
 
-    assert any(item["project_key"] == "project-5" for item in high_only)
+    assert any(item["project_key"] == "propane-pyrolysis" for item in high_only)
     assert any(
-        item["category"] == "Leadership Surprise Risk" and item["project_name"] == "Project 5"
+        item["category"] == "Leadership Surprise Risk" and item["project_name"] == "Propane Pyrolysis"
         for item in queue
     )
 
@@ -417,7 +417,7 @@ def test_dependency_created_from_external_predecessor(monkeypatch, app, tmp_path
     monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", lambda *args, **kwargs: _parsed_with_external_ref(date.today()))
 
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
         dependencies = session.query(ProjectDependency).all()
 
@@ -429,8 +429,8 @@ def test_dependency_created_from_external_predecessor(monkeypatch, app, tmp_path
 def test_project_summary_counts_overdue_dependencies(app):
     today = date(2026, 3, 26)
     with app.state.session_factory() as session:
-        downstream = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
-        upstream = session.query(Project).filter(Project.key == "project-2").one()
+        downstream = session.query(Project).filter(Project.key == "p2c").one()
+        upstream = session.query(Project).filter(Project.key == "atlas").one()
         session.add(
             ProjectDependency(
                 upstream_project_id=upstream.id,
@@ -453,8 +453,8 @@ def test_project_summary_counts_overdue_dependencies(app):
 def test_attention_queue_flags_blocked_cross_project_dependencies(app):
     today = date(2026, 3, 26)
     with app.state.session_factory() as session:
-        downstream = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
-        upstream = session.query(Project).filter(Project.key == "project-2").one()
+        downstream = session.query(Project).filter(Project.key == "p2c").one()
+        upstream = session.query(Project).filter(Project.key == "atlas").one()
         session.add(
             ProjectDependency(
                 upstream_project_id=upstream.id,
@@ -499,7 +499,7 @@ def test_phase3_ingests_resource_fields(monkeypatch, app, tmp_path: Path):
     monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", lambda *args, **kwargs: parsed_project)
 
     with app.state.session_factory() as session:
-        project = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
+        project = session.query(Project).filter(Project.key == "p2c").one()
         import_schedule(session, project, sample_file, source_filename=sample_file.name, settings=app.state.settings)
 
         snapshot = get_latest_snapshot(session, project.id)
@@ -511,13 +511,13 @@ def test_phase3_ingests_resource_fields(monkeypatch, app, tmp_path: Path):
 
 
 def test_phase3_detects_cross_project_resource_overlap(monkeypatch, app, tmp_path: Path):
-    project_a_file = tmp_path / "pyrolysis-petal-2026.mpp"
-    project_b_file = tmp_path / "project-2.mpp"
+    project_a_file = tmp_path / "p2c.mpp"
+    project_b_file = tmp_path / "atlas.mpp"
     project_a_file.write_text("placeholder-a", encoding="utf-8")
     project_b_file.write_text("placeholder-b", encoding="utf-8")
 
     parsed_by_project = {
-        "pyrolysis-petal-2026": ParsedProject(
+        "p2c": ParsedProject(
             title="Project A",
             current_finish_date=date(2026, 4, 3),
             baseline_finish_date=date(2026, 4, 1),
@@ -534,7 +534,7 @@ def test_phase3_detects_cross_project_resource_overlap(monkeypatch, app, tmp_pat
                 )
             ],
         ),
-        "project-2": ParsedProject(
+        "atlas": ParsedProject(
             title="Project B",
             current_finish_date=date(2026, 4, 2),
             baseline_finish_date=date(2026, 4, 1),
@@ -558,21 +558,21 @@ def test_phase3_detects_cross_project_resource_overlap(monkeypatch, app, tmp_pat
     monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
 
     with app.state.session_factory() as session:
-        project_a = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
-        project_b = session.query(Project).filter(Project.key == "project-2").one()
+        project_a = session.query(Project).filter(Project.key == "p2c").one()
+        project_b = session.query(Project).filter(Project.key == "atlas").one()
 
         import_schedule(
             session,
             project_a,
             project_a_file,
-            source_filename="pyrolysis-petal-2026.mpp",
+            source_filename="p2c.mpp",
             settings=app.state.settings,
         )
         import_schedule(
             session,
             project_b,
             project_b_file,
-            source_filename="project-2.mpp",
+            source_filename="atlas.mpp",
             settings=app.state.settings,
         )
 
@@ -581,17 +581,17 @@ def test_phase3_detects_cross_project_resource_overlap(monkeypatch, app, tmp_pat
     assert clusters
     top = clusters[0]
     assert top["resource_key"] == "samlee"
-    assert {"Pyrolysis Petal 2026", "Project 2"}.issubset(set(top["impacted_projects"]))
+    assert {"P2C", "Atlas"}.issubset(set(top["impacted_projects"]))
 
 
 def test_phase3_ranks_conflicts_by_severity(monkeypatch, app, tmp_path: Path):
-    project_a_file = tmp_path / "pyrolysis-petal-2026.mpp"
-    project_b_file = tmp_path / "project-2.mpp"
+    project_a_file = tmp_path / "p2c.mpp"
+    project_b_file = tmp_path / "atlas.mpp"
     project_a_file.write_text("placeholder-a", encoding="utf-8")
     project_b_file.write_text("placeholder-b", encoding="utf-8")
 
     parsed_by_project = {
-        "pyrolysis-petal-2026": ParsedProject(
+        "p2c": ParsedProject(
             title="Project A",
             current_finish_date=date(2026, 4, 4),
             baseline_finish_date=date(2026, 4, 1),
@@ -617,7 +617,7 @@ def test_phase3_ranks_conflicts_by_severity(monkeypatch, app, tmp_path: Path):
                 ),
             ],
         ),
-        "project-2": ParsedProject(
+        "atlas": ParsedProject(
             title="Project B",
             current_finish_date=date(2026, 4, 4),
             baseline_finish_date=date(2026, 4, 1),
@@ -650,21 +650,21 @@ def test_phase3_ranks_conflicts_by_severity(monkeypatch, app, tmp_path: Path):
     monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
 
     with app.state.session_factory() as session:
-        project_a = session.query(Project).filter(Project.key == "pyrolysis-petal-2026").one()
-        project_b = session.query(Project).filter(Project.key == "project-2").one()
+        project_a = session.query(Project).filter(Project.key == "p2c").one()
+        project_b = session.query(Project).filter(Project.key == "atlas").one()
 
         import_schedule(
             session,
             project_a,
             project_a_file,
-            source_filename="pyrolysis-petal-2026.mpp",
+            source_filename="p2c.mpp",
             settings=app.state.settings,
         )
         import_schedule(
             session,
             project_b,
             project_b_file,
-            source_filename="project-2.mpp",
+            source_filename="atlas.mpp",
             settings=app.state.settings,
         )
 
