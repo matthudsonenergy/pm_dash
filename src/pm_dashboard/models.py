@@ -34,6 +34,7 @@ class Project(Base):
     risks: Mapped[list["RiskItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     decisions: Mapped[list["DecisionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     suggestions: Mapped[list["SuggestionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    resources: Mapped[list["ResourceItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     upstream_dependencies: Mapped[list["ProjectDependency"]] = relationship(
         back_populates="upstream_project",
         cascade="all, delete-orphan",
@@ -91,6 +92,20 @@ class Task(Base):
     resource_key: Mapped[Optional[str]] = mapped_column(String(120), nullable=True, index=True)
 
     snapshot: Mapped["ScheduleSnapshot"] = relationship(back_populates="tasks")
+
+
+class ResourceItem(Base):
+    __tablename__ = "resource_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(150))
+    role: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    key: Mapped[str] = mapped_column(String(120), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
+
+    project: Mapped["Project"] = relationship(back_populates="resources")
 
 
 class Milestone(Base):

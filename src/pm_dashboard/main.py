@@ -15,10 +15,13 @@ from sqlalchemy import text
 from .config import Settings, get_settings
 from .database import init_db, make_engine, make_session_factory
 from .projects import repo_file_project_rows
-from .repository import list_projects
+from .repository import get_latest_snapshot, list_projects, list_resources, list_tasks_for_snapshot
 from .seed import ensure_seed_projects
 from .services import (
     ActionCreate,
+    ProjectCreate,
+    ResourceCreate,
+    TaskCreate,
     DecisionCreate,
     RiskCreate,
     WeeklyUpdateCreate,
@@ -27,7 +30,10 @@ from .services import (
     attention_queue,
     cockpit_view,
     create_action,
+    create_project,
+    create_resource,
     create_decision,
+    create_task,
     create_risk,
     dependencies_view,
     current_week_start,
@@ -37,8 +43,10 @@ from .services import (
     get_action_or_404,
     get_decision_or_404,
     get_project_or_404,
+    get_resource_or_404,
     get_risk_or_404,
     get_suggestion_or_404,
+    get_task_or_404,
     get_weekly_update_or_404,
     import_history,
     import_schedule,
@@ -50,8 +58,11 @@ from .services import (
     resolve_project_for_import,
     save_upload,
     serialize_decision,
+    serialize_project,
+    serialize_resource,
     serialize_risk,
     serialize_suggestion,
+    serialize_task,
     serialize_portfolio_summary_draft,
     serialize_weekly_update,
     truthy,
@@ -60,6 +71,9 @@ from .services import (
     update_risk,
     update_weekly_update,
     upsert_weekly_update,
+    delete_project,
+    delete_resource,
+    delete_task,
     get_portfolio_summary_draft_or_404,
 )
 
@@ -287,24 +301,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/admin/imports", response_class=HTMLResponse)
     def imports_page(request: Request, session=Depends(get_session)):
         require_editor(request)
+        projects = list_projects(session)
+        project_tasks = {
+            project.id: (list_tasks_for_snapshot(session, snapshot.id) if (snapshot := get_latest_snapshot(session, project.id)) else [])
+            for project in projects
+        }
         return templates.TemplateResponse(
             request,
             "imports.html",
             {
                 **base_context(request),
-                "projects": list_projects(session),
+                "projects": projects,
                 "runs": import_history(session),
                 "sample_mpp": str(app.state.settings.sample_mpp),
                 "sample_mpp_exists": app.state.settings.sample_mpp.exists(),
                 "repo_mpp_files": repo_file_project_rows(app.state.settings.repo_root),
                 "parser_ready": app.state.settings.parser_jar.exists(),
-                "projects_nav": list_projects(session),
+                "project_tasks": project_tasks,
+                "project_resources": {project.id: list_resources(session, project.id) for project in projects},
+                "projects_nav": projects,
             },
         )
 
     @app.get("/api/projects")
     def projects_api(session=Depends(get_session)):
         return portfolio_view(session, settings=app.state.settings)
+
+    @app.post("/api/projects")
+    async def create_project_api(request: Request, session=Depends(get_session)):
+        require_editor(request)
+        data = await request_data(request)
+        project = create_project(
+            session,
+            ProjectCreate(
+                key=data.get("key", ""),
+                name=data.get("name", ""),
+                description=data.get("description"),
+            ),
+        )
+        return serialize_project(project)
+
+    @app.delete("/api/projects/{project_id}")
+    def delete_project_api(project_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
+        project = get_project_or_404(session, project_id)
+        delete_project(session, project)
+        return {"status": "deleted", "project_id": project_id}
 
     @app.get("/api/portfolio/resource-conflicts")
     def resource_conflicts_api(session=Depends(get_session)):
@@ -351,6 +393,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "notes": action.notes,
             }
         )
+
+    @app.post("/api/projects/{project_id}/tasks")
+    async def create_task_api(project_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
+        project = get_project_or_404(session, project_id)
+        data = await request_data(request)
+        task = create_task(
+            session,
+            project,
+            TaskCreate(
+                name=data["name"],
+                start_date=parse_date(data.get("start_date")),
+                finish_date=parse_date(data.get("finish_date")),
+                owner=data.get("owner"),
+                resource_key=data.get("resource_key"),
+                percent_complete=float(data.get("percent_complete") or 0.0),
+                notes=data.get("notes"),
+            ),
+        )
+        return serialize_task(task)
+
+    @app.delete("/api/tasks/{task_id}")
+    def delete_task_api(task_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
+        task = get_task_or_404(session, task_id)
+        delete_task(session, task)
+        return {"status": "deleted", "task_id": task_id}
+
+    @app.post("/api/projects/{project_id}/resources")
+    async def create_resource_api(project_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
+        project = get_project_or_404(session, project_id)
+        data = await request_data(request)
+        resource = create_resource(
+            session,
+            project,
+            ResourceCreate(
+                name=data["name"],
+                role=data.get("role"),
+                key=data.get("key"),
+            ),
+        )
+        return serialize_resource(resource)
+
+    @app.delete("/api/resources/{resource_id}")
+    def delete_resource_api(resource_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
+        resource = get_resource_or_404(session, resource_id)
+        delete_resource(session, resource)
+        return {"status": "deleted", "resource_id": resource_id}
 
     @app.patch("/api/actions/{action_id}")
     async def update_action_api(action_id: int, request: Request, session=Depends(get_session)):

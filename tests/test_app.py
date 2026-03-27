@@ -14,7 +14,19 @@ from fastapi import HTTPException
 
 from pm_dashboard.main import create_app, request_access_role, request_is_authorized
 from pm_dashboard.models import Project
-from pm_dashboard.services import ActionCreate, create_action
+from pm_dashboard.services import (
+    ActionCreate,
+    ProjectCreate,
+    ResourceCreate,
+    TaskCreate,
+    create_action,
+    create_project,
+    create_resource,
+    create_task,
+    delete_project,
+    delete_resource,
+    delete_task,
+)
 
 
 def make_request(app, path: str = "/", headers: dict[str, str] | None = None, method: str = "GET") -> Request:
@@ -217,3 +229,28 @@ def test_multi_file_import_endpoint_returns_error_collection(monkeypatch, app):
         )
 
     assert response.status_code == 400
+
+
+def test_project_task_resource_crud_services(app):
+    with app.state.session_factory() as session:
+        project = create_project(
+            session,
+            ProjectCreate(key="demo", name="Demo Project", description="Created in test"),
+        )
+        task = create_task(
+            session,
+            project,
+            TaskCreate(name="Demo Task", owner="Alex"),
+        )
+        resource = create_resource(
+            session,
+            project,
+            ResourceCreate(name="Taylor", role="Planner"),
+        )
+        assert project.id is not None
+        assert task.id is not None
+        assert resource.id is not None
+
+        delete_task(session, task)
+        delete_resource(session, resource)
+        delete_project(session, project)
