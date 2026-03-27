@@ -11,71 +11,93 @@
 
   <section class="card-grid">
     {% for project in projects %}
-      <article class="card">
-        <div class="card-head">
-          <div>
-            <p class="mini-label">Attention Rank</p>
-            <strong>#{{ project.needs_attention_rank }}</strong>
+      <details class="card project-card">
+        <summary class="project-card-summary">
+          <div class="card-head">
+            <div>
+              <p class="mini-label">Attention Rank</p>
+              <strong>#{{ project.needs_attention_rank }}</strong>
+            </div>
+            <span class="rag rag-{{ project.rag_status|lower }}">{{ project.rag_status }}</span>
           </div>
-          <span class="rag rag-{{ project.rag_status|lower }}">{{ project.rag_status }}</span>
+          <div class="project-card-title">
+            <div>
+              <h3>{{ project.project_name }}</h3>
+              <p class="helper">
+                Click for detailed view
+              </p>
+            </div>
+            <span class="detail-toggle">Details</span>
+          </div>
+          <dl class="metric-list metric-list-compact">
+            <div>
+              <dt>Confidence</dt>
+              <dd>{{ project.milestone_confidence }}</dd>
+            </div>
+            <div>
+              <dt>Next milestone</dt>
+              <dd>{{ project.next_major_milestone or "None" }}</dd>
+            </div>
+            <div>
+              <dt>Days remaining</dt>
+              <dd>{{ project.days_to_next_milestone if project.days_to_next_milestone is not none else "N/A" }}</dd>
+            </div>
+            <div>
+              <dt>Upload date</dt>
+              <dd>{{ project.project_file.updated_at[:10] if project.project_file and project.project_file.updated_at else "Not uploaded" }}</dd>
+            </div>
+          </dl>
+          <div class="card-highlight">
+            <div>
+              <p class="mini-label">Leadership surprise risk</p>
+              <p class="highlight-value">
+                {{ project.leadership_surprise_indicator.level|upper }}
+                ({{ project.leadership_surprise_indicator.score }})
+              </p>
+            </div>
+            <div class="tag-row tag-row-tight">
+              {% for risk in project.top_risks[:2] %}
+                <span class="tag">{{ risk.title }}</span>
+              {% else %}
+                <span class="tag muted-tag">No active top risks</span>
+              {% endfor %}
+            </div>
+          </div>
+        </summary>
+        <div class="project-card-detail">
+          <dl class="metric-list">
+            <div>
+              <dt>Loaded file</dt>
+              <dd>{{ project.project_file.filename if project.project_file else "None saved" }}</dd>
+            </div>
+            <div>
+              <dt>Overdue actions</dt>
+              <dd>{{ project.overdue_actions_count }}</dd>
+            </div>
+            <div>
+              <dt>Recent movement</dt>
+              <dd>{{ project.recent_schedule_movement }}</dd>
+            </div>
+            <div>
+              <dt>Open decisions</dt>
+              <dd>{{ project.open_decisions_count }}</dd>
+            </div>
+          </dl>
+          <div class="metric-block">
+            <p class="mini-label">Leadership surprise drivers</p>
+            <ul>
+              {% for driver in project.leadership_surprise_indicator.drivers %}
+                <li>{{ driver }}</li>
+              {% else %}
+                <li>No surprise-risk drivers triggered</li>
+              {% endfor %}
+            </ul>
+          </div>
+          <div class="detail-actions">
+            <a class="hero-link" href="/projects/{{ project.project_id }}">Open project page</a>
+          </div>
         </div>
-        <h3><a href="/projects/{{ project.project_id }}">{{ project.project_name }}</a></h3>
-        <dl class="metric-list">
-          <div>
-            <dt>Confidence</dt>
-            <dd>{{ project.milestone_confidence }}</dd>
-          </div>
-          <div>
-            <dt>Next milestone</dt>
-            <dd>{{ project.next_major_milestone or "None" }}</dd>
-          </div>
-          <div>
-            <dt>Days remaining</dt>
-            <dd>{{ project.days_to_next_milestone if project.days_to_next_milestone is not none else "N/A" }}</dd>
-          </div>
-          <div>
-            <dt>Loaded file</dt>
-            <dd>{{ project.project_file.filename if project.project_file else "None saved" }}</dd>
-          </div>
-          <div>
-            <dt>Overdue actions</dt>
-            <dd>{{ project.overdue_actions_count }}</dd>
-          </div>
-          <div>
-            <dt>Recent movement</dt>
-            <dd>{{ project.recent_schedule_movement }}</dd>
-          </div>
-          <div>
-            <dt>Open decisions</dt>
-            <dd>{{ project.open_decisions_count }}</dd>
-          </div>
-          <div>
-            <dt>Stale plan</dt>
-            <dd>{{ "Yes" if project.stale_plan else "No" }}</dd>
-          </div>
-        </dl>
-        <div class="tag-row">
-          {% for risk in project.top_risks %}
-            <span class="tag">{{ risk.title }}</span>
-          {% else %}
-            <span class="tag muted-tag">No active top risks</span>
-          {% endfor %}
-        </div>
-        <div class="metric-block">
-          <p class="mini-label">Leadership surprise risk</p>
-          <p>
-            {{ project.leadership_surprise_indicator.level|upper }}
-            ({{ project.leadership_surprise_indicator.score }})
-          </p>
-          <ul>
-            {% for driver in project.leadership_surprise_indicator.drivers[:2] %}
-              <li>{{ driver }}</li>
-            {% else %}
-              <li>No surprise-risk drivers triggered</li>
-            {% endfor %}
-          </ul>
-        </div>
-      </article>
+      </details>
     {% endfor %}
   </section>
 

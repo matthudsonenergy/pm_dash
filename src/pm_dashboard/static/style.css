@@ -206,6 +206,51 @@ a {
   align-items: start;
 }
 
+.project-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.project-card-summary {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.project-card-summary::-webkit-details-marker {
+  display: none;
+}
+
+.project-card-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.project-card-title h3 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.detail-toggle {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.project-card[open] .detail-toggle {
+  background: rgba(22, 32, 38, 0.08);
+  color: var(--ink);
+}
+
 .inline-filter {
   display: flex;
   gap: 10px;
@@ -232,6 +277,39 @@ a {
 .metric-list dd {
   margin: 4px 0 0;
   font-weight: 700;
+}
+
+.metric-list-compact {
+  margin-top: 0;
+}
+
+.card-highlight {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(22, 32, 38, 0.04);
+}
+
+.highlight-value {
+  margin: 6px 0 0;
+  font-weight: 700;
+}
+
+.tag-row-tight {
+  margin-top: 0;
+}
+
+.project-card-detail {
+  display: grid;
+  gap: 18px;
+  padding: 0 20px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.detail-actions {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .rag {
@@ -337,6 +415,30 @@ code {
 .simple-list {
   margin: 0;
   padding-left: 18px;
+}
+
+@media (max-width: 720px) {
+  .page-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    padding: 20px;
+  }
+
+  .content {
+    padding: 20px;
+  }
+
+  .hero,
+  .project-card-title {
+    flex-direction: column;
+    align-items: start;
+  }
+
+  .metric-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 920px) {
