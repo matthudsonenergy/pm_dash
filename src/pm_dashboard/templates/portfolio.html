@@ -101,38 +101,4 @@
     {% endfor %}
   </section>
 
-  <section class="panel">
-    <h3>Cross-project resource conflict clusters</h3>
-    {% if resource_conflicts %}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Resource</th>
-              <th>Severity</th>
-              <th>Projects</th>
-              <th>Window</th>
-              <th>Top collision</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for cluster in resource_conflicts %}
-              <tr>
-                <td>{{ cluster.resource_label }}</td>
-                <td>{{ cluster.severity_score }}</td>
-                <td>{{ cluster.impacted_projects|join(", ") }}</td>
-                <td>{{ cluster.window_start }} → {{ cluster.window_end }}</td>
-                <td>
-                  {{ cluster.conflicts[0].projects|join(" vs ") }}<br />
-                  <small>{{ cluster.conflicts[0].tasks|join(" / ") }}</small>
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <p class="muted">No cross-project critical-resource conflicts detected.</p>
-    {% endif %}
-  </section>
 {% endblock %}
