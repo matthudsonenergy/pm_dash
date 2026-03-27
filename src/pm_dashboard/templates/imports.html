@@ -92,6 +92,104 @@
     </article>
   </section>
 
+  <section class="panel">
+    <h3>Manage Projects, Tasks, and Resources</h3>
+    <div class="two-up">
+      <div>
+        <h4>Add Project</h4>
+        <form id="project-form" class="stack-form">
+          <input name="key" placeholder="Key (e.g. demo)" required>
+          <input name="name" placeholder="Project name" required>
+          <textarea name="description" placeholder="Description"></textarea>
+          <button type="submit">Add Project</button>
+        </form>
+      </div>
+      <div>
+        <h4>Existing Projects</h4>
+        <ul class="simple-list">
+          {% for project in projects %}
+            <li>
+              <strong>{{ project.name }}</strong> ({{ project.key }})
+              <button class="ghost-btn delete-project" data-project-id="{{ project.id }}">Delete</button>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="two-up">
+      <div>
+        <h4>Add Task</h4>
+        <form id="task-form" class="stack-form">
+          <select name="project_id" required>
+            <option value="">Select project</option>
+            {% for project in projects %}
+              <option value="{{ project.id }}">{{ project.name }}</option>
+            {% endfor %}
+          </select>
+          <input name="name" placeholder="Task name" required>
+          <input name="owner" placeholder="Owner">
+          <input name="resource_key" placeholder="Resource key">
+          <input name="start_date" type="date">
+          <input name="finish_date" type="date">
+          <button type="submit">Add Task</button>
+        </form>
+      </div>
+      <div>
+        <h4>Existing Tasks</h4>
+        <ul class="simple-list">
+          {% for project in projects %}
+            {% for task in project_tasks[project.id] %}
+              <li>
+                <strong>{{ project.name }}:</strong> {{ task.name }}
+                <button class="ghost-btn delete-task" data-task-id="{{ task.id }}">Delete</button>
+              </li>
+            {% else %}
+              <li><em>{{ project.name }}</em>: no tasks yet.</li>
+            {% endfor %}
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="two-up">
+      <div>
+        <h4>Add Resource</h4>
+        <form id="resource-form" class="stack-form">
+          <select name="project_id" required>
+            <option value="">Select project</option>
+            {% for project in projects %}
+              <option value="{{ project.id }}">{{ project.name }}</option>
+            {% endfor %}
+          </select>
+          <input name="name" placeholder="Resource name" required>
+          <input name="role" placeholder="Role">
+          <input name="key" placeholder="Resource key (optional)">
+          <button type="submit">Add Resource</button>
+        </form>
+      </div>
+      <div>
+        <h4>Existing Resources</h4>
+        <ul class="simple-list">
+          {% for project in projects %}
+            {% for resource in project_resources[project.id] %}
+              <li>
+                <strong>{{ project.name }}:</strong> {{ resource.name }}{% if resource.role %} ({{ resource.role }}){% endif %}
+                <button class="ghost-btn delete-resource" data-resource-id="{{ resource.id }}">Delete</button>
+              </li>
+            {% else %}
+              <li><em>{{ project.name }}</em>: no resources yet.</li>
+            {% endfor %}
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  </section>
+
   <script>
     const importForm = document.getElementById("import-form");
     const fileInput = document.getElementById("file-input");
@@ -161,6 +259,61 @@
           alert(payload.error || "Import failed");
         }
       }
+    });
+
+    async function submitAndRefresh(url, method, formData = null) {
+      const options = { method };
+      if (formData) {
+        options.body = formData;
+      }
+      const response = await fetch(url, options);
+      if (response.ok) {
+        window.location.reload();
+        return;
+      }
+      const payload = await response.json().catch(() => ({}));
+      alert(payload.detail || payload.error || "Request failed");
+    }
+
+    const projectForm = document.getElementById("project-form");
+    projectForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      await submitAndRefresh("/api/projects", "POST", new FormData(projectForm));
+    });
+
+    const taskForm = document.getElementById("task-form");
+    taskForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(taskForm);
+      const projectId = formData.get("project_id");
+      await submitAndRefresh(`/api/projects/${projectId}/tasks`, "POST", formData);
+    });
+
+    const resourceForm = document.getElementById("resource-form");
+    resourceForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formData = new FormData(resourceForm);
+      const projectId = formData.get("project_id");
+      await submitAndRefresh(`/api/projects/${projectId}/resources`, "POST", formData);
+    });
+
+    document.querySelectorAll(".delete-project").forEach((button) => {
+      button.addEventListener("click", async () => {
+        if (!confirm("Delete this project and related data?")) return;
+        await submitAndRefresh(`/api/projects/${button.dataset.projectId}`, "DELETE");
+      });
+    });
+
+    document.querySelectorAll(".delete-task").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await submitAndRefresh(`/api/tasks/${button.dataset.taskId}`, "DELETE");
+      });
+    });
+
+    document.querySelectorAll(".delete-resource").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await submitAndRefresh(`/api/resources/${button.dataset.resourceId}`, "DELETE");
+      });
     });
   </script>
 {% endblock %}

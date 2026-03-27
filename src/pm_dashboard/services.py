@@ -22,6 +22,7 @@ from .models import (
     Milestone,
     Project,
     ProjectDependency,
+    ResourceItem,
     PortfolioSummaryDraft,
     RiskItem,
     ScheduleSnapshot,
@@ -41,9 +42,11 @@ from .repository import (
     get_latest_snapshot,
     get_project,
     get_project_by_key,
+    get_resource,
     get_previous_snapshot,
     get_risk,
     get_suggestion,
+    get_task,
     get_weekly_update,
     get_weekly_update_by_id,
     list_actions,
@@ -119,6 +122,31 @@ class DecisionCreate:
     impact: Optional[str] = None
     source: str = "manual"
     weekly_update_id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class ProjectCreate:
+    key: str
+    name: str
+    description: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TaskCreate:
+    name: str
+    start_date: Optional[date] = None
+    finish_date: Optional[date] = None
+    owner: Optional[str] = None
+    resource_key: Optional[str] = None
+    percent_complete: float = 0.0
+    notes: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ResourceCreate:
+    name: str
+    role: Optional[str] = None
+    key: Optional[str] = None
 
 
 def ensure_storage(settings: Settings) -> None:
@@ -504,6 +532,101 @@ def detect_resource_conflicts(
     return sorted(clusters, key=lambda item: (item["severity_score"], item["conflict_count"]), reverse=True)
 
 
+def create_project(session, payload: ProjectCreate) -> Project:
+    normalized_key = normalize_project_token(payload.key)
+    if not normalized_key:
+        raise HTTPException(status_code=400, detail="Project key is required")
+    if not (payload.name or "").strip():
+        raise HTTPException(status_code=400, detail="Project name is required")
+    if get_project_by_key(session, normalized_key):
+        raise HTTPException(status_code=409, detail="Project key already exists")
+    project = Project(
+        key=normalized_key,
+        name=payload.name.strip(),
+        description=(payload.description or None),
+    )
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
+def delete_project(session, project: Project) -> None:
+    session.delete(project)
+    session.commit()
+
+
+def _ensure_project_snapshot(session, project: Project) -> ScheduleSnapshot:
+    snapshot = get_latest_snapshot(session, project.id)
+    if snapshot:
+        return snapshot
+    snapshot = ScheduleSnapshot(
+        project_id=project.id,
+        source_filename="manual-entry",
+        source_path="manual-entry",
+        source_checksum=f"manual-{project.id}",
+        task_count=0,
+        milestone_count=0,
+        critical_task_count=0,
+    )
+    session.add(snapshot)
+    session.flush()
+    return snapshot
+
+
+def create_task(session, project: Project, payload: TaskCreate) -> Task:
+    if not (payload.name or "").strip():
+        raise HTTPException(status_code=400, detail="Task name is required")
+    snapshot = _ensure_project_snapshot(session, project)
+    task = Task(
+        snapshot_id=snapshot.id,
+        name=payload.name.strip(),
+        start_date=payload.start_date,
+        finish_date=payload.finish_date,
+        percent_complete=payload.percent_complete,
+        notes=payload.notes,
+        primary_owner=payload.owner,
+        resource_key=payload.resource_key,
+        resource_names=payload.owner if payload.owner else None,
+    )
+    session.add(task)
+    snapshot.task_count = (snapshot.task_count or 0) + 1
+    session.commit()
+    session.refresh(task)
+    return task
+
+
+def delete_task(session, task: Task) -> None:
+    snapshot = session.get(ScheduleSnapshot, task.snapshot_id)
+    session.delete(task)
+    if snapshot and snapshot.task_count and snapshot.task_count > 0:
+        snapshot.task_count -= 1
+    session.commit()
+
+
+def create_resource(session, project: Project, payload: ResourceCreate) -> ResourceItem:
+    if not (payload.name or "").strip():
+        raise HTTPException(status_code=400, detail="Resource name is required")
+    normalized_key = _normalize_resource_key(payload.key or payload.name)
+    if not normalized_key:
+        raise HTTPException(status_code=400, detail="Resource name is required")
+    resource = ResourceItem(
+        project_id=project.id,
+        name=payload.name.strip(),
+        role=(payload.role or None),
+        key=normalized_key,
+    )
+    session.add(resource)
+    session.commit()
+    session.refresh(resource)
+    return resource
+
+
+def delete_resource(session, resource: ResourceItem) -> None:
+    session.delete(resource)
+    session.commit()
+
+
 def create_action(session, project: Project, payload: ActionCreate) -> ActionItem:
     action = ActionItem(
         project_id=project.id,
@@ -597,6 +720,39 @@ def serialize_action(action: ActionItem) -> dict:
         "due_date": action.due_date.isoformat() if action.due_date else None,
         "status": action.status,
         "notes": action.notes,
+    }
+
+
+def serialize_project(project: Project) -> dict:
+    return {
+        "id": project.id,
+        "key": project.key,
+        "name": project.name,
+        "description": project.description,
+    }
+
+
+def serialize_task(task: Task) -> dict:
+    return {
+        "id": task.id,
+        "snapshot_id": task.snapshot_id,
+        "name": task.name,
+        "start_date": task.start_date.isoformat() if task.start_date else None,
+        "finish_date": task.finish_date.isoformat() if task.finish_date else None,
+        "owner": task.primary_owner,
+        "resource_key": task.resource_key,
+        "percent_complete": task.percent_complete,
+        "notes": task.notes,
+    }
+
+
+def serialize_resource(resource: ResourceItem) -> dict:
+    return {
+        "id": resource.id,
+        "project_id": resource.project_id,
+        "name": resource.name,
+        "role": resource.role,
+        "key": resource.key,
     }
 
 
@@ -2016,6 +2172,20 @@ def get_action_or_404(session, action_id: int) -> ActionItem:
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
     return action
+
+
+def get_task_or_404(session, task_id: int) -> Task:
+    task = get_task(session, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
+def get_resource_or_404(session, resource_id: int) -> ResourceItem:
+    resource = get_resource(session, resource_id)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return resource
 
 
 def get_risk_or_404(session, risk_id: int) -> RiskItem:

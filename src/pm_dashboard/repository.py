@@ -11,6 +11,7 @@ from .models import (
     Milestone,
     Project,
     ProjectDependency,
+    ResourceItem,
     RiskItem,
     ScheduleSnapshot,
     SuggestionItem,
@@ -29,6 +30,21 @@ def get_project(session, project_id: int):
 
 def get_project_by_key(session, key: str):
     return session.scalar(select(Project).where(Project.key == key))
+
+
+def get_resource(session, resource_id: int):
+    return session.get(ResourceItem, resource_id)
+
+
+def get_task(session, task_id: int):
+    return session.get(Task, task_id)
+
+
+def list_resources(session, project_id: int | None = None):
+    stmt = select(ResourceItem)
+    if project_id is not None:
+        stmt = stmt.where(ResourceItem.project_id == project_id)
+    return session.scalars(stmt.order_by(ResourceItem.name, ResourceItem.id)).all()
 
 
 def get_latest_snapshot(session, project_id: int):
