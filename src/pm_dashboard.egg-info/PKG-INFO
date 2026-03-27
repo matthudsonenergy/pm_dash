@@ -1,7 +1,7 @@
 Metadata-Version: 2.4
 Name: pm-dashboard
 Version: 0.1.0
-Summary: Local PM dashboard for seven projects with MS Project ingestion
+Summary: Local PM dashboard for project portfolios with MS Project ingestion
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 Requires-Dist: fastapi>=0.135.2
@@ -14,7 +14,7 @@ Requires-Dist: pytest>=9.0.2; extra == "dev"
 
 # PM Dashboard
 
-Local single-user portfolio dashboard for seven projects, built around direct `.mpp` ingestion, schedule variance visibility, weekly operating cadence, and an exception-first PM workflow.
+Local single-user portfolio dashboard for project portfolios, built around direct `.mpp` ingestion, schedule variance visibility, weekly operating cadence, and an exception-first PM workflow.
 
 ## Stack
 
@@ -74,7 +74,7 @@ Authentication is disabled unless both auth variables are set.
 
 ## Current Feature Set
 
-- Portfolio overview across seven seeded projects
+- Portfolio overview across all saved projects
 - Direct `.mpp` upload and snapshot-based schedule variance detection
 - Project drilldowns with milestones, critical tasks, slipped tasks, risks, decisions, and actions
 - Weekly project workflow pages with weekly updates and suggestion review
@@ -137,17 +137,11 @@ Authentication is disabled unless both auth variables are set.
 
 ## Seeded Projects
 
-The database is seeded with seven project records:
+Projects are created through the UI/API or on first import when a filename can be matched to a project key.
 
-1. `p2c` (`P2C`, source title `2026 Pyrolysis Petal`)
-2. `atlas` (`Atlas`, source title `Atlas_phase1`)
-3. `mpm` (`MPM`, source title `MPMProject324`)
-4. `iprd` (`IPRD`)
-5. `propane-pyrolysis` (`Propane Pyrolysis`)
-6. `x3` (`X3`)
-7. `venture-funding` (`Venture Funding`)
+Uploaded `.mpp` files are saved in the database as the current file for their project.
 
-The current repo-root `.mpp` files map cleanly to `p2c`, `atlas`, and `mpm`.
+Viewer and editor accounts read the same saved project files and project state; editor access only adds write actions.
 
 ## Railway Deployment
 

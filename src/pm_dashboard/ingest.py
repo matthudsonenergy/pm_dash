@@ -7,8 +7,7 @@ from .config import get_settings
 from .database import init_db, make_engine, make_session_factory
 from .repository import get_project_by_key
 from .projects import discover_repo_mpp_files
-from .seed import ensure_seed_projects
-from .services import ensure_storage, import_schedule, infer_project_from_inputs
+from .services import ProjectCreate, create_project, ensure_storage, import_schedule, infer_project_from_inputs
 
 
 def main() -> None:
@@ -29,19 +28,18 @@ def main() -> None:
     init_db(engine)
 
     with session_factory() as session:
-        ensure_seed_projects(session)
-
         if args.all_repo_mpp:
             imported = 0
             for file_path in discover_repo_mpp_files(settings.repo_root):
                 inferred_key = infer_project_from_inputs(file_path.name, file_path.stem)
                 if not inferred_key:
-                    print(f"Skipping {file_path.name}: no project match")
+                    inferred_key = "".join(char.lower() for char in file_path.stem if char.isalnum())
+                if not inferred_key:
+                    print(f"Skipping {file_path.name}: no project key could be derived")
                     continue
                 project = get_project_by_key(session, inferred_key)
                 if not project:
-                    print(f"Skipping {file_path.name}: unknown project key {inferred_key}")
-                    continue
+                    project = create_project(session, ProjectCreate(key=inferred_key, name=file_path.stem, description=None))
                 run = import_schedule(
                     session,
                     project,
@@ -60,11 +58,13 @@ def main() -> None:
 
         project_key = args.project or infer_project_from_inputs(Path(args.file).name, Path(args.file).stem)
         if not project_key:
+            project_key = "".join(char.lower() for char in Path(args.file).stem if char.isalnum())
+        if not project_key:
             raise SystemExit("Could not infer project key from file name. Pass --project explicitly.")
 
         project = get_project_by_key(session, project_key)
         if not project:
-            raise SystemExit(f"Unknown project key: {project_key}")
+            project = create_project(session, ProjectCreate(key=project_key, name=Path(args.file).stem, description=None))
         run = import_schedule(session, project, Path(args.file), source_filename=Path(args.file).name, settings=settings)
         print(f"Import run {run.id} completed with status={run.status} for project={project.key}")
 

@@ -42,6 +42,17 @@
     </section>
   {% endif %}
 
+  <section class="panel">
+    <h3>Loaded Project File</h3>
+    {% if detail.project_file %}
+      <p><strong>{{ detail.project_file.filename }}</strong></p>
+      <p class="helper">Saved in the database and shared across viewer and editor sessions.</p>
+      <p class="helper">Last updated {{ detail.project_file.updated_at }}.</p>
+    {% else %}
+      <p class="muted">No project file has been saved for this project yet.</p>
+    {% endif %}
+  </section>
+
   <section class="two-up">
     <article class="panel">
       <h3>Delivery</h3>

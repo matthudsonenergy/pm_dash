@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -35,6 +35,7 @@ class Project(Base):
     decisions: Mapped[list["DecisionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     suggestions: Mapped[list["SuggestionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     resources: Mapped[list["ResourceItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    project_files: Mapped[list["ProjectFile"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     upstream_dependencies: Mapped[list["ProjectDependency"]] = relationship(
         back_populates="upstream_project",
         cascade="all, delete-orphan",
@@ -67,6 +68,22 @@ class ScheduleSnapshot(Base):
     tasks: Mapped[list["Task"]] = relationship(back_populates="snapshot", cascade="all, delete-orphan")
     milestones: Mapped[list["Milestone"]] = relationship(back_populates="snapshot", cascade="all, delete-orphan")
     import_runs: Mapped[list["ImportRun"]] = relationship(back_populates="snapshot")
+
+
+class ProjectFile(Base):
+    __tablename__ = "project_files"
+    __table_args__ = (UniqueConstraint("project_id", name="uq_project_files_project_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    file_blob: Mapped[bytes] = mapped_column(LargeBinary)
+    checksum: Mapped[str] = mapped_column(String(64))
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
+
+    project: Mapped["Project"] = relationship(back_populates="project_files")
 
 
 class Task(Base):

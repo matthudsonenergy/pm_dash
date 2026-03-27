@@ -11,6 +11,7 @@ from .models import (
     Milestone,
     Project,
     ProjectDependency,
+    ProjectFile,
     ResourceItem,
     RiskItem,
     ScheduleSnapshot,
@@ -30,6 +31,14 @@ def get_project(session, project_id: int):
 
 def get_project_by_key(session, key: str):
     return session.scalar(select(Project).where(Project.key == key))
+
+
+def get_project_file(session, project_id: int):
+    return session.scalar(select(ProjectFile).where(ProjectFile.project_id == project_id).limit(1))
+
+
+def list_project_files(session):
+    return session.scalars(select(ProjectFile).order_by(ProjectFile.updated_at.desc(), ProjectFile.id.desc())).all()
 
 
 def get_resource(session, resource_id: int):

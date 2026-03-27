@@ -1,6 +1,6 @@
 # PM Dashboard
 
-Local single-user portfolio dashboard for seven projects, built around direct `.mpp` ingestion, schedule variance visibility, weekly operating cadence, and an exception-first PM workflow.
+Local single-user portfolio dashboard for project portfolios, built around direct `.mpp` ingestion, schedule variance visibility, weekly operating cadence, and an exception-first PM workflow.
 
 ## Stack
 
@@ -64,8 +64,9 @@ Authentication is disabled unless at least one complete credential pair is set. 
 
 ## Current Feature Set
 
-- Portfolio overview across seven seeded projects
+- Portfolio overview across all saved projects
 - Direct `.mpp` upload and snapshot-based schedule variance detection
+- Uploaded project files are stored in SQLite so the latest file stays loaded for both viewer and editor sessions
 - Project drilldowns with milestones, critical tasks, slipped tasks, risks, decisions, and actions
 - Weekly project workflow pages with weekly updates and suggestion review
 - Weekly cockpit with review queue, portfolio signals, and executive summary draft/final sections
@@ -125,19 +126,11 @@ Authentication is disabled unless at least one complete credential pair is set. 
 3. Review the generated draft, then accept it with optional PM edits through `POST /api/portfolio/executive-summary/{draft_id}/accept`.
 4. The cockpit shows both the latest pending draft and the latest accepted final summary for that week.
 
-## Seeded Projects
+## Project Setup
 
-The database is seeded with seven project records:
-
-1. `p2c` (`P2C`, source title `2026 Pyrolysis Petal`)
-2. `atlas` (`Atlas`, source title `Atlas_phase1`)
-3. `mpm` (`MPM`, source title `MPMProject324`)
-4. `iprd` (`IPRD`)
-5. `propane-pyrolysis` (`Propane Pyrolysis`)
-6. `x3` (`X3`)
-7. `venture-funding` (`Venture Funding`)
-
-The current repo-root `.mpp` files map cleanly to `p2c`, `atlas`, and `mpm`.
+- Projects are created through the UI/API or on first import when a filename can be matched to a project key.
+- Uploaded `.mpp` files are saved in the database as the current file for their project.
+- Viewer and editor accounts read the same saved project files and project state; editor access only adds write actions.
 
 ## Railway Deployment
 

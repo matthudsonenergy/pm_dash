@@ -34,6 +34,10 @@
             <dd>{{ project.days_to_next_milestone if project.days_to_next_milestone is not none else "N/A" }}</dd>
           </div>
           <div>
+            <dt>Loaded file</dt>
+            <dd>{{ project.project_file.filename if project.project_file else "None saved" }}</dd>
+          </div>
+          <div>
             <dt>Overdue actions</dt>
             <dd>{{ project.overdue_actions_count }}</dd>
           </div>

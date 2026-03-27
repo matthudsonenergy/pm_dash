@@ -16,7 +16,6 @@ from .config import Settings, get_settings
 from .database import init_db, make_engine, make_session_factory
 from .projects import repo_file_project_rows
 from .repository import get_latest_snapshot, list_projects, list_resources, list_tasks_for_snapshot
-from .seed import ensure_seed_projects
 from .services import (
     ActionCreate,
     ProjectCreate,
@@ -56,7 +55,7 @@ from .services import (
     project_detail,
     project_workflow_view,
     resolve_project_for_import,
-    save_upload,
+    materialize_project_file,
     serialize_decision,
     serialize_project,
     serialize_resource,
@@ -75,6 +74,8 @@ from .services import (
     delete_resource,
     delete_task,
     get_portfolio_summary_draft_or_404,
+    serialize_project_file,
+    upsert_project_file,
 )
 
 
@@ -128,8 +129,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = make_engine(settings.db_url)
     session_factory = make_session_factory(engine)
     init_db(engine)
-    with session_factory() as session:
-        ensure_seed_projects(session)
 
     app.state.settings = settings
     app.state.engine = engine
@@ -319,6 +318,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "parser_ready": app.state.settings.parser_jar.exists(),
                 "project_tasks": project_tasks,
                 "project_resources": {project.id: list_resources(session, project.id) for project in projects},
+                "project_files": {project.id: serialize_project_file(project.project_files[0] if project.project_files else None) for project in projects},
                 "projects_nav": projects,
             },
         )
@@ -639,14 +639,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for file in files:
             source_filename = file.filename or ""
             project = resolve_project_for_import(session, source_filename=source_filename, project_id=project_id)
-            saved_file = save_upload(file, app.state.settings)
+            file_bytes = await file.read()
+            project_file = upsert_project_file(
+                session,
+                project,
+                filename=source_filename or f"{project.key}.mpp",
+                content=file_bytes,
+                content_type=file.content_type,
+            )
+            saved_file = materialize_project_file(
+                project_file.filename,
+                project_file.file_blob,
+                app.state.settings,
+            )
             try:
                 run = import_schedule(
                     session,
                     project,
                     saved_file,
-                    source_filename=source_filename or saved_file.name,
+                    source_filename=project_file.filename,
                     settings=app.state.settings,
+                    source_path=f"db://project-files/{project_file.id}/{project_file.filename}",
+                    source_checksum=project_file.checksum,
                 )
                 results.append(
                     {
@@ -655,6 +669,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "project_id": project.id,
                         "project_name": project.name,
                         "source_filename": run.source_filename,
+                        "project_file": serialize_project_file(project_file),
                     }
                 )
             except Exception as exc:
@@ -663,9 +678,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "error": str(exc),
                         "project_id": project.id,
                         "project_name": project.name,
-                        "source_filename": source_filename or saved_file.name,
+                        "source_filename": project_file.filename,
                     }
                 )
+            finally:
+                saved_file.unlink(missing_ok=True)
 
         if errors:
             return JSONResponse(status_code=400, content={"results": results, "errors": errors})

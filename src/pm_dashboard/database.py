@@ -35,6 +35,12 @@ def _reconcile_sqlite_schema(engine) -> None:
         "projects": {
             "description": "TEXT",
         },
+        "project_files": {
+            "content_type": "VARCHAR(100)",
+            "checksum": "VARCHAR(64)",
+            "uploaded_at": "DATETIME",
+            "updated_at": "DATETIME",
+        },
         "tasks": {
             "resource_names": "TEXT",
             "primary_owner": "VARCHAR(150)",
@@ -45,6 +51,9 @@ def _reconcile_sqlite_schema(engine) -> None:
         },
     }
     index_specs = {
+        "project_files": {
+            "ix_project_files_project_id": "CREATE INDEX ix_project_files_project_id ON project_files (project_id)",
+        },
         "tasks": {
             "ix_tasks_resource_key": "CREATE INDEX ix_tasks_resource_key ON tasks (resource_key)",
         },

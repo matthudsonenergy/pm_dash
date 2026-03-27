@@ -32,7 +32,7 @@
         </label>
         <button type="submit">Run Import</button>
       </form>
-      <p class="helper">Uploads are auto-categorized into one of the seven projects from the file name. Use the override only if needed.</p>
+      <p class="helper">Uploads are stored in the database and become the shared project file for both viewer and editor access. Use the override only if needed.</p>
       <p id="selected-files" class="helper">No files selected.</p>
       {% if sample_mpp_exists %}
         <p class="helper">Reference sample on disk: <code>{{ sample_mpp }}</code></p>
@@ -110,6 +110,11 @@
           {% for project in projects %}
             <li>
               <strong>{{ project.name }}</strong> ({{ project.key }})
+              {% if project_files[project.id] %}
+                <span> | saved file: {{ project_files[project.id].filename }}</span>
+              {% else %}
+                <span> | no saved file</span>
+              {% endif %}
               <button class="ghost-btn delete-project" data-project-id="{{ project.id }}">Delete</button>
             </li>
           {% endfor %}

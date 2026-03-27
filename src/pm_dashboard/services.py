@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
+import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -11,8 +11,9 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.orm import object_session
 
 from .config import Settings, get_settings
 from .models import (
@@ -22,6 +23,7 @@ from .models import (
     Milestone,
     Project,
     ProjectDependency,
+    ProjectFile,
     ResourceItem,
     PortfolioSummaryDraft,
     RiskItem,
@@ -42,6 +44,7 @@ from .repository import (
     get_latest_snapshot,
     get_project,
     get_project_by_key,
+    get_project_file,
     get_resource,
     get_previous_snapshot,
     get_risk,
@@ -162,6 +165,10 @@ def compute_checksum(path: Path) -> str:
     return digest.hexdigest()
 
 
+def compute_bytes_checksum(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
 def current_week_start(today: Optional[date] = None) -> date:
     today = today or date.today()
     return today - timedelta(days=today.weekday())
@@ -236,15 +243,59 @@ def material_slip_flag(task: ParsedTask, previous_finish: Optional[date], settin
     return is_material, variance_previous, variance_baseline
 
 
-def save_upload(upload: UploadFile, settings: Settings | None = None) -> Path:
+def serialize_project_file(project_file: ProjectFile | None) -> Optional[dict]:
+    if not project_file:
+        return None
+    return {
+        "id": project_file.id,
+        "project_id": project_file.project_id,
+        "filename": project_file.filename,
+        "content_type": project_file.content_type,
+        "checksum": project_file.checksum,
+        "uploaded_at": project_file.uploaded_at.isoformat() if project_file.uploaded_at else None,
+        "updated_at": project_file.updated_at.isoformat() if project_file.updated_at else None,
+        "byte_size": len(project_file.file_blob or b""),
+    }
+
+
+def upsert_project_file(
+    session,
+    project: Project,
+    *,
+    filename: str,
+    content: bytes,
+    content_type: str | None = None,
+) -> ProjectFile:
+    safe_name = Path(filename or "project.mpp").name
+    project_file = get_project_file(session, project.id)
+    checksum = compute_bytes_checksum(content)
+    if not project_file:
+        project_file = ProjectFile(
+            project_id=project.id,
+            filename=safe_name,
+            content_type=content_type,
+            file_blob=content,
+            checksum=checksum,
+        )
+        session.add(project_file)
+    else:
+        project_file.filename = safe_name
+        project_file.content_type = content_type
+        project_file.file_blob = content
+        project_file.checksum = checksum
+        project_file.uploaded_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(project_file)
+    return project_file
+
+
+def materialize_project_file(filename: str, content: bytes, settings: Settings | None = None) -> Path:
     settings = settings or get_settings()
     ensure_storage(settings)
-    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    safe_name = upload.filename or f"upload-{timestamp}.mpp"
-    destination = settings.uploads_dir / f"{timestamp}-{safe_name}"
-    with destination.open("wb") as handle:
-        shutil.copyfileobj(upload.file, handle)
-    return destination
+    suffix = Path(filename).suffix or ".mpp"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=settings.uploads_dir) as handle:
+        handle.write(content)
+        return Path(handle.name)
 
 
 def import_schedule(
@@ -253,13 +304,15 @@ def import_schedule(
     file_path: Path,
     source_filename: str,
     settings: Settings | None = None,
+    source_path: str | None = None,
+    source_checksum: str | None = None,
 ) -> ImportRun:
     settings = settings or get_settings()
     ensure_storage(settings)
     import_run = ImportRun(
         project_id=project.id,
         source_filename=source_filename,
-        source_path=str(file_path),
+        source_path=source_path or str(file_path),
         status="running",
     )
     session.add(import_run)
@@ -267,7 +320,16 @@ def import_schedule(
 
     try:
         parsed = parse_mpp_file(file_path, settings)
-        snapshot = _persist_snapshot(session, project, file_path, source_filename, parsed, settings)
+        snapshot = _persist_snapshot(
+            session,
+            project,
+            file_path,
+            source_filename,
+            parsed,
+            settings,
+            source_path=source_path,
+            source_checksum=source_checksum,
+        )
         import_run.snapshot_id = snapshot.id
         import_run.status = "success"
         import_run.finished_at = datetime.now(UTC)
@@ -293,12 +355,14 @@ def _persist_snapshot(
     source_filename: str,
     parsed: ParsedProject,
     settings: Settings,
+    source_path: str | None = None,
+    source_checksum: str | None = None,
 ) -> ScheduleSnapshot:
-    checksum = compute_checksum(file_path)
+    checksum = source_checksum or compute_checksum(file_path)
     snapshot = ScheduleSnapshot(
         project_id=project.id,
         source_filename=source_filename,
-        source_path=str(file_path),
+        source_path=source_path or str(file_path),
         source_checksum=checksum,
         current_finish_date=parsed.current_finish_date,
         baseline_finish_date=parsed.baseline_finish_date,
@@ -414,12 +478,25 @@ def resolve_project_for_import(session, source_filename: str, project_id: int | 
 
     inferred_key = infer_project_from_inputs(source_filename, Path(source_filename).stem)
     if not inferred_key:
+        inferred_key = normalize_project_token(Path(source_filename).stem)
+    if not inferred_key:
         raise HTTPException(status_code=400, detail="Could not infer project from file name")
 
     project = get_project_by_key(session, inferred_key)
-    if not project:
-        raise HTTPException(status_code=400, detail=f"Unknown inferred project key: {inferred_key}")
-    return project
+    if project:
+        return project
+
+    definition = infer_project_definition(source_filename, Path(source_filename).stem)
+    project_name = definition.name if definition else Path(source_filename).stem or inferred_key
+    project_description = definition.description if definition else f"Imported from {source_filename}"
+    return create_project(
+        session,
+        ProjectCreate(
+            key=inferred_key,
+            name=project_name,
+            description=project_description,
+        ),
+    )
 
 
 def _normalize_resource_key(value: Optional[str]) -> Optional[str]:
@@ -729,6 +806,7 @@ def serialize_project(project: Project) -> dict:
         "key": project.key,
         "name": project.name,
         "description": project.description,
+        "project_file": serialize_project_file(get_project_file(object_session(project), project.id) if object_session(project) else None),
     }
 
 
@@ -1535,6 +1613,7 @@ def portfolio_view(
     )
     for index, summary in enumerate(ranked, start=1):
         summary["needs_attention_rank"] = index
+        summary["project_file"] = serialize_project_file(get_project_file(session, summary["project_id"]))
     return ranked
 
 def deteriorating_projects(session, settings: Settings | None = None, today: Optional[date] = None) -> list[dict]:
@@ -1655,6 +1734,7 @@ def project_detail(
 
     return {
         "summary": summary,
+        "project_file": serialize_project_file(get_project_file(session, project.id)),
         "actions": actions,
         "risks": risks,
         "decisions": decisions,
@@ -2152,6 +2232,7 @@ def import_history(session) -> list[dict]:
                 "project_name": item.project.name if item.project else str(item.project_id),
                 "status": item.status,
                 "source_filename": item.source_filename,
+                "source_path": item.source_path,
                 "started_at": item.started_at.isoformat() if item.started_at else None,
                 "finished_at": item.finished_at.isoformat() if item.finished_at else None,
                 "error_message": item.error_message,
