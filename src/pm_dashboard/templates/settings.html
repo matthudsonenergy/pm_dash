@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Editor Settings</p>
+      <h2>Control automation thresholds and dashboard behavior.</h2>
+      <p class="subtle">These settings are saved to the current editor profile.</p>
+    </div>
+  </section>
+
+  <section class="two-up">
+    <article class="panel">
+      <h3>Profile</h3>
+      <form id="editor-profile-form" class="stack-form">
+        <label>
+          Display name
+          <input name="display_name" value="{{ profile.display_name or '' }}" placeholder="Display name">
+        </label>
+        <label>
+          Username
+          <input value="{{ profile.username }}" disabled>
+        </label>
+
+        <h4>Automation thresholds</h4>
+        <label>
+          Stale plan days
+          <input type="number" min="1" name="stale_plan_days" value="{{ profile.stale_plan_days }}" required>
+        </label>
+        <label>
+          Upcoming milestone window
+          <input type="number" min="1" name="upcoming_milestone_days" value="{{ profile.upcoming_milestone_days }}" required>
+        </label>
+        <label>
+          Slip from previous snapshot
+          <input type="number" min="1" name="slip_from_previous_days" value="{{ profile.slip_from_previous_days }}" required>
+        </label>
+        <label>
+          Slip from baseline
+          <input type="number" min="1" name="slip_from_baseline_days" value="{{ profile.slip_from_baseline_days }}" required>
+        </label>
+
+        <h4>Feature controls</h4>
+        <label class="checkbox-row">
+          <input type="checkbox" name="auto_refresh_enabled" {% if profile.auto_refresh_enabled %}checked{% endif %}>
+          Enable saved-file refresh actions
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="auto_generate_outbound_drafts" {% if profile.auto_generate_outbound_drafts %}checked{% endif %}>
+          Enable outbound draft generation
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="auto_generate_executive_summary" {% if profile.auto_generate_executive_summary %}checked{% endif %}>
+          Enable executive summary generation
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="show_attention_explainers" {% if profile.show_attention_explainers %}checked{% endif %}>
+          Show attention explainers in portfolio and cockpit
+        </label>
+        <button type="submit">Save settings</button>
+      </form>
+    </article>
+
+    <article class="panel">
+      <h3>Current Profile</h3>
+      <dl class="metric-list">
+        <div>
+          <dt>Editor</dt>
+          <dd>{{ profile.username }}</dd>
+        </div>
+        <div>
+          <dt>Display</dt>
+          <dd>{{ profile.display_name or profile.username }}</dd>
+        </div>
+        <div>
+          <dt>Updated</dt>
+          <dd>{{ profile.updated_at[:19] if profile.updated_at else "Now" }}</dd>
+        </div>
+        <div>
+          <dt>Refresh</dt>
+          <dd>{{ "Enabled" if profile.auto_refresh_enabled else "Disabled" }}</dd>
+        </div>
+      </dl>
+      <ul class="simple-list">
+        <li>Thresholds apply to the current editor session and all editor API views using this profile.</li>
+        <li>Viewer sessions continue using the default application settings.</li>
+        <li>Disabled generation features block the related cockpit actions.</li>
+      </ul>
+    </article>
+  </section>
+
+  <script>
+    const editorProfileForm = document.getElementById("editor-profile-form");
+    if (editorProfileForm) {
+      editorProfileForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const formData = new FormData(editorProfileForm);
+        const response = await fetch("/api/editor-profile", { method: "PATCH", body: formData });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          const payload = await response.json().catch(() => ({}));
+          alert(payload.detail || "Failed to save settings");
+        }
+      });
+    }
+  </script>
+{% endblock %}

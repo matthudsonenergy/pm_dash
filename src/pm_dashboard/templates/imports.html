@@ -8,7 +8,7 @@
       <p class="subtle">Parser ready: {{ "Yes" if parser_ready else "No" }}</p>
     </div>
     <div class="hero-actions">
-      <button id="refresh-saved-files" type="button" class="hero-link">Refresh saved files</button>
+      <button id="refresh-saved-files" type="button" class="hero-link" {% if editor_profile and not editor_profile.auto_refresh_enabled %}disabled{% endif %}>Refresh saved files</button>
     </div>
   </section>
 
@@ -123,7 +123,7 @@
               <td>{{ row.last_failed_error or "-" }}</td>
               <td>
                 {% if row.eligible %}
-                  <button type="button" class="ghost-btn refresh-project-btn" data-project-id="{{ row.project_id }}">Refresh</button>
+                  <button type="button" class="ghost-btn refresh-project-btn" data-project-id="{{ row.project_id }}" {% if editor_profile and not editor_profile.auto_refresh_enabled %}disabled{% endif %}>Refresh</button>
                 {% else %}
                   <span class="helper">Needs file</span>
                 {% endif %}

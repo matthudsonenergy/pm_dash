@@ -6,6 +6,7 @@ import re
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from itertools import combinations
 from pathlib import Path
@@ -19,6 +20,7 @@ from .config import Settings, get_settings
 from .models import (
     ActionItem,
     DecisionItem,
+    EditorProfile,
     ImportRun,
     Milestone,
     OutboundDraft,
@@ -42,6 +44,7 @@ from .projects import (
 )
 from .repository import (
     get_decision,
+    get_editor_profile_by_username,
     get_latest_snapshot,
     get_outbound_draft,
     get_project,
@@ -175,6 +178,19 @@ class OutboundDraftCreate:
     week_start: Optional[date] = None
     project_id: Optional[int] = None
     source_payload: Optional[dict] = None
+
+
+@dataclass(frozen=True)
+class EditorProfileUpdate:
+    display_name: Optional[str]
+    stale_plan_days: int
+    upcoming_milestone_days: int
+    slip_from_previous_days: int
+    slip_from_baseline_days: int
+    auto_refresh_enabled: bool
+    auto_generate_outbound_drafts: bool
+    auto_generate_executive_summary: bool
+    show_attention_explainers: bool
 
 
 def ensure_storage(settings: Settings) -> None:
@@ -954,6 +970,73 @@ def serialize_portfolio_summary_draft(draft: PortfolioSummaryDraft) -> dict:
         "created_at": draft.created_at.isoformat() if draft.created_at else None,
         "reviewed_at": draft.reviewed_at.isoformat() if draft.reviewed_at else None,
     }
+
+
+def serialize_editor_profile(profile: EditorProfile) -> dict:
+    return {
+        "id": profile.id,
+        "username": profile.username,
+        "display_name": profile.display_name,
+        "stale_plan_days": profile.stale_plan_days,
+        "upcoming_milestone_days": profile.upcoming_milestone_days,
+        "slip_from_previous_days": profile.slip_from_previous_days,
+        "slip_from_baseline_days": profile.slip_from_baseline_days,
+        "auto_refresh_enabled": profile.auto_refresh_enabled,
+        "auto_generate_outbound_drafts": profile.auto_generate_outbound_drafts,
+        "auto_generate_executive_summary": profile.auto_generate_executive_summary,
+        "show_attention_explainers": profile.show_attention_explainers,
+        "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
+    }
+
+
+def get_or_create_editor_profile(session, username: str, settings: Settings | None = None) -> EditorProfile:
+    settings = settings or get_settings()
+    profile = get_editor_profile_by_username(session, username)
+    if profile:
+        return profile
+    profile = EditorProfile(
+        username=username,
+        display_name=username,
+        stale_plan_days=settings.stale_plan_days,
+        upcoming_milestone_days=settings.upcoming_milestone_days,
+        slip_from_previous_days=settings.slip_from_previous_days,
+        slip_from_baseline_days=settings.slip_from_baseline_days,
+        auto_refresh_enabled=True,
+        auto_generate_outbound_drafts=True,
+        auto_generate_executive_summary=True,
+        show_attention_explainers=True,
+    )
+    session.add(profile)
+    session.commit()
+    session.refresh(profile)
+    return profile
+
+
+def update_editor_profile(session, profile: EditorProfile, payload: EditorProfileUpdate) -> EditorProfile:
+    profile.display_name = payload.display_name
+    profile.stale_plan_days = payload.stale_plan_days
+    profile.upcoming_milestone_days = payload.upcoming_milestone_days
+    profile.slip_from_previous_days = payload.slip_from_previous_days
+    profile.slip_from_baseline_days = payload.slip_from_baseline_days
+    profile.auto_refresh_enabled = payload.auto_refresh_enabled
+    profile.auto_generate_outbound_drafts = payload.auto_generate_outbound_drafts
+    profile.auto_generate_executive_summary = payload.auto_generate_executive_summary
+    profile.show_attention_explainers = payload.show_attention_explainers
+    session.commit()
+    session.refresh(profile)
+    return profile
+
+
+def effective_settings_for_profile(settings: Settings, profile: EditorProfile | None) -> Settings:
+    if not profile:
+        return settings
+    return replace(
+        settings,
+        stale_plan_days=profile.stale_plan_days,
+        upcoming_milestone_days=profile.upcoming_milestone_days,
+        slip_from_previous_days=profile.slip_from_previous_days,
+        slip_from_baseline_days=profile.slip_from_baseline_days,
+    )
 
 
 def serialize_outbound_draft(draft: OutboundDraft) -> dict:

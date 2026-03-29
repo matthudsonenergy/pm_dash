@@ -25,6 +25,7 @@ from .services import (
     ResourceCreate,
     TaskCreate,
     DecisionCreate,
+    EditorProfileUpdate,
     RiskCreate,
     WeeklyUpdateCreate,
     accept_suggestion,
@@ -46,8 +47,10 @@ from .services import (
     dismiss_suggestion,
     dismiss_portfolio_summary_draft,
     dismiss_outbound_draft,
+    effective_settings_for_profile,
     get_action_or_404,
     get_decision_or_404,
+    get_or_create_editor_profile,
     get_project_or_404,
     get_resource_or_404,
     get_risk_or_404,
@@ -72,6 +75,7 @@ from .services import (
     serialize_task,
     serialize_portfolio_summary_draft,
     serialize_outbound_draft,
+    serialize_editor_profile,
     serialize_weekly_update,
     truthy,
     update_action_status,
@@ -79,6 +83,7 @@ from .services import (
     update_risk,
     update_weekly_update,
     upsert_weekly_update,
+    update_editor_profile,
     delete_project,
     delete_resource,
     delete_task,
@@ -156,6 +161,19 @@ def request_access_role(authorization_header: str | None, settings: Settings) ->
     return None
 
 
+def request_basic_auth_username(authorization_header: str | None) -> str | None:
+    if not authorization_header or not authorization_header.startswith("Basic "):
+        return None
+    try:
+        decoded = base64.b64decode(authorization_header.split(" ", 1)[1]).decode("utf-8")
+    except Exception:
+        return None
+    username, separator, _password = decoded.partition(":")
+    if not separator:
+        return None
+    return username
+
+
 def request_is_authorized(authorization_header: str | None, settings: Settings) -> bool:
     return request_access_role(authorization_header, settings) is not None
 
@@ -206,18 +224,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         role = request_access_role(request.headers.get("authorization"), settings)
         return role or "viewer"
 
+    def request_username(request: Request) -> str:
+        username = request_basic_auth_username(request.headers.get("authorization"))
+        if username:
+            return username
+        return settings.editor_username or settings.auth_username or "local-editor"
+
     def require_editor(request: Request) -> None:
         if request_role(request) != "editor":
             raise HTTPException(status_code=403, detail="Editor access required")
 
-    def base_context(request: Request):
+    def request_editor_profile(request: Request, session):
+        if request_role(request) != "editor":
+            return None
+        return get_or_create_editor_profile(session, request_username(request), settings)
+
+    def request_settings(request: Request, session):
+        return effective_settings_for_profile(settings, request_editor_profile(request, session))
+
+    def base_context(request: Request, session=None):
         role = request_role(request)
+        editor_profile = request_editor_profile(request, session) if session is not None else None
         return {
             "request": request,
             "today": date.today().isoformat(),
             "current_week_start": current_week_start().isoformat(),
             "access_role": role,
             "can_edit": role == "editor",
+            "editor_profile": serialize_editor_profile(editor_profile) if editor_profile else None,
         }
 
     async def request_data(request: Request) -> dict:
@@ -256,13 +290,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def portfolio_page(request: Request, session=Depends(get_session)):
-        projects = portfolio_view(session, settings=app.state.settings)
-        resource_conflicts = detect_resource_conflicts(session, settings=app.state.settings)
+        active_settings = request_settings(request, session)
+        projects = portfolio_view(session, settings=active_settings)
+        resource_conflicts = detect_resource_conflicts(session, settings=active_settings)
         return templates.TemplateResponse(
             request,
             "portfolio.html",
             {
-                **base_context(request),
+                **base_context(request, session),
                 "projects": projects,
                 "resource_conflicts": resource_conflicts,
                 "projects_nav": list_projects(session),
@@ -272,12 +307,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/cockpit", response_class=HTMLResponse)
     def cockpit_page(request: Request, session=Depends(get_session)):
         week_start = parse_date(request.query_params.get("week_start")) or current_week_start()
-        cockpit = cockpit_view(session, settings=app.state.settings, week_start=week_start)
+        cockpit = cockpit_view(session, settings=request_settings(request, session), week_start=week_start)
         return templates.TemplateResponse(
             request,
             "cockpit.html",
             {
-                **base_context(request),
+                **base_context(request, session),
                 "cockpit": cockpit,
                 "projects_nav": list_projects(session),
             },
@@ -286,12 +321,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/projects/{project_id}", response_class=HTMLResponse)
     def project_page(project_id: int, request: Request, session=Depends(get_session)):
         project = get_project_or_404(session, project_id)
-        detail = project_detail(session, project, settings=app.state.settings, consume_task_diff=True)
+        detail = project_detail(session, project, settings=request_settings(request, session), consume_task_diff=True)
         return templates.TemplateResponse(
             request,
             "project_detail.html",
             {
-                **base_context(request),
+                **base_context(request, session),
                 "project": project,
                 "detail": detail,
                 "projects_nav": list_projects(session),
@@ -302,12 +337,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def project_workflow_page(project_id: int, request: Request, session=Depends(get_session)):
         project = get_project_or_404(session, project_id)
         week_start = parse_date(request.query_params.get("week_start")) or current_week_start()
-        workflow = project_workflow_view(session, project, settings=app.state.settings, week_start=week_start)
+        workflow = project_workflow_view(session, project, settings=request_settings(request, session), week_start=week_start)
         return templates.TemplateResponse(
             request,
             "project_workflow.html",
             {
-                **base_context(request),
+                **base_context(request, session),
                 "project": project,
                 "workflow": workflow,
                 "projects_nav": list_projects(session),
@@ -316,12 +351,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/attention", response_class=HTMLResponse)
     def attention_page(request: Request, session=Depends(get_session)):
-        queue = attention_queue(session, settings=app.state.settings)
+        queue = attention_queue(session, settings=request_settings(request, session))
         return templates.TemplateResponse(
             request,
             "attention.html",
             {
-                **base_context(request),
+                **base_context(request, session),
                 "queue": queue,
                 "projects_nav": list_projects(session),
             },
@@ -334,8 +369,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request,
             "dependencies.html",
             {
-                **base_context(request),
+                **base_context(request, session),
                 "dependency_data": dependency_data,
+                "projects_nav": list_projects(session),
+            },
+        )
+
+    @app.get("/settings", response_class=HTMLResponse)
+    def settings_page(request: Request, session=Depends(get_session)):
+        require_editor(request)
+        profile = request_editor_profile(request, session)
+        return templates.TemplateResponse(
+            request,
+            "settings.html",
+            {
+                **base_context(request, session),
+                "profile": serialize_editor_profile(profile),
                 "projects_nav": list_projects(session),
             },
         )
@@ -352,7 +401,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request,
             "imports.html",
             {
-                **base_context(request),
+                **base_context(request, session),
                 "projects": projects,
                 "runs": import_history(session),
                 "sample_mpp": str(app.state.settings.sample_mpp),
@@ -362,14 +411,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "project_tasks": project_tasks,
                 "project_resources": {project.id: list_resources(session, project.id) for project in projects},
                 "project_files": {project.id: serialize_project_file(project.project_files[0] if project.project_files else None) for project in projects},
-                "refresh_summary": refresh_status_summary(session, settings=app.state.settings),
+                "refresh_summary": refresh_status_summary(session, settings=request_settings(request, session)),
                 "projects_nav": projects,
             },
         )
 
     @app.get("/api/projects")
-    def projects_api(session=Depends(get_session)):
-        return portfolio_view(session, settings=app.state.settings)
+    def projects_api(request: Request, session=Depends(get_session)):
+        return portfolio_view(session, settings=request_settings(request, session))
 
     @app.post("/api/projects")
     async def create_project_api(request: Request, session=Depends(get_session)):
@@ -393,18 +442,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "deleted", "project_id": project_id}
 
     @app.get("/api/portfolio/resource-conflicts")
-    def resource_conflicts_api(session=Depends(get_session)):
-        return detect_resource_conflicts(session, settings=app.state.settings)
+    def resource_conflicts_api(request: Request, session=Depends(get_session)):
+        return detect_resource_conflicts(session, settings=request_settings(request, session))
 
     @app.get("/api/projects/{project_id}")
-    def project_api(project_id: int, session=Depends(get_session)):
+    def project_api(project_id: int, request: Request, session=Depends(get_session)):
         project = get_project_or_404(session, project_id)
-        return project_detail(session, project, settings=app.state.settings)
+        return project_detail(session, project, settings=request_settings(request, session))
 
     @app.get("/api/cockpit")
-    def cockpit_api(week_start: str | None = None, session=Depends(get_session)):
+    def cockpit_api(request: Request, week_start: str | None = None, session=Depends(get_session)):
         selected_week = parse_date(week_start) or current_week_start()
-        return cockpit_view(session, settings=app.state.settings, week_start=selected_week)
+        return cockpit_view(session, settings=request_settings(request, session), week_start=selected_week)
 
     @app.get("/api/dependencies")
     def dependencies_api(project_id: int | None = None, session=Depends(get_session)):
@@ -508,7 +557,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session,
             project,
             weekly_update_payload_from_data(data),
-            settings=app.state.settings,
+            settings=request_settings(request, session),
         )
         return serialize_weekly_update(weekly_update)
 
@@ -531,14 +580,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "leadership_watch": data.get("leadership_watch", weekly_update.leadership_watch),
             }
         )
-        weekly_update = update_weekly_update(session, weekly_update, payload, settings=app.state.settings)
+        weekly_update = update_weekly_update(session, weekly_update, payload, settings=request_settings(request, session))
         return serialize_weekly_update(weekly_update)
 
     @app.get("/api/projects/{project_id}/suggestions")
-    def project_suggestions_api(project_id: int, week_start: str | None = None, session=Depends(get_session)):
+    def project_suggestions_api(project_id: int, request: Request, week_start: str | None = None, session=Depends(get_session)):
         project = get_project_or_404(session, project_id)
         selected_week = parse_date(week_start) or current_week_start()
-        workflow = project_workflow_view(session, project, settings=app.state.settings, week_start=selected_week)
+        workflow = project_workflow_view(session, project, settings=request_settings(request, session), week_start=selected_week)
         return workflow["suggestions"]
 
     @app.post("/api/suggestions/{suggestion_id}/accept")
@@ -579,8 +628,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/portfolio/executive-summary/generate")
     def generate_executive_summary_api(request: Request, week_start: str | None = None, session=Depends(get_session)):
         require_editor(request)
+        profile = request_editor_profile(request, session)
+        if profile and not profile.auto_generate_executive_summary:
+            raise HTTPException(status_code=400, detail="Executive summary generation is disabled in the editor profile")
         selected_week = parse_date(week_start) or current_week_start()
-        draft = create_portfolio_summary_draft(session, selected_week, settings=app.state.settings)
+        draft = create_portfolio_summary_draft(session, selected_week, settings=request_settings(request, session))
         return serialize_portfolio_summary_draft(draft)
 
     @app.post("/api/portfolio/executive-summary/{draft_id}/accept")
@@ -617,8 +669,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session=Depends(get_session),
     ):
         require_editor(request)
+        profile = request_editor_profile(request, session)
+        if profile and not profile.auto_generate_outbound_drafts:
+            raise HTTPException(status_code=400, detail="Outbound draft generation is disabled in the editor profile")
         selected_week = parse_date(week_start) or current_week_start()
-        drafts = generate_outbound_drafts(session, week_start=selected_week, settings=app.state.settings, project_id=project_id)
+        drafts = generate_outbound_drafts(session, week_start=selected_week, settings=request_settings(request, session), project_id=project_id)
         return {"count": len(drafts), "drafts": drafts}
 
     @app.post("/api/outbound-drafts/{draft_id}/accept")
@@ -761,7 +816,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         project,
                         saved_file,
                         source_filename=project_file.filename,
-                        settings=app.state.settings,
+                        settings=request_settings(request, session),
                         source_path=f"db://project-files/{project_file.id}/{project_file.filename}",
                         source_checksum=project_file.checksum,
                     )
@@ -773,7 +828,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         project,
                         saved_file,
                         source_filename=project_file.filename,
-                        settings=app.state.settings,
+                        settings=request_settings(request, session),
                     )
                 results.append(
                     {
@@ -803,13 +858,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"results": results, "count": len(results)}
 
     @app.get("/api/imports/refresh-status")
-    def refresh_status_api(session=Depends(get_session)):
-        return refresh_status_summary(session, settings=app.state.settings)
+    def refresh_status_api(request: Request, session=Depends(get_session)):
+        return refresh_status_summary(session, settings=request_settings(request, session))
+
+    @app.get("/api/editor-profile")
+    def editor_profile_api(request: Request, session=Depends(get_session)):
+        require_editor(request)
+        return serialize_editor_profile(request_editor_profile(request, session))
+
+    @app.patch("/api/editor-profile")
+    async def update_editor_profile_api(request: Request, session=Depends(get_session)):
+        require_editor(request)
+        profile = request_editor_profile(request, session)
+        data = await request_data(request)
+        updated = update_editor_profile(
+            session,
+            profile,
+            EditorProfileUpdate(
+                display_name=(data.get("display_name") or profile.display_name),
+                stale_plan_days=int(data.get("stale_plan_days") or profile.stale_plan_days),
+                upcoming_milestone_days=int(data.get("upcoming_milestone_days") or profile.upcoming_milestone_days),
+                slip_from_previous_days=int(data.get("slip_from_previous_days") or profile.slip_from_previous_days),
+                slip_from_baseline_days=int(data.get("slip_from_baseline_days") or profile.slip_from_baseline_days),
+                auto_refresh_enabled=truthy(data.get("auto_refresh_enabled", profile.auto_refresh_enabled)),
+                auto_generate_outbound_drafts=truthy(data.get("auto_generate_outbound_drafts", profile.auto_generate_outbound_drafts)),
+                auto_generate_executive_summary=truthy(data.get("auto_generate_executive_summary", profile.auto_generate_executive_summary)),
+                show_attention_explainers=truthy(data.get("show_attention_explainers", profile.show_attention_explainers)),
+            ),
+        )
+        return serialize_editor_profile(updated)
 
     @app.post("/api/imports/refresh")
     def refresh_saved_files_api(request: Request, project_id: int | None = None, session=Depends(get_session)):
         require_editor(request)
-        payload = refresh_saved_projects(session, settings=app.state.settings, project_id=project_id)
+        profile = request_editor_profile(request, session)
+        if profile and not profile.auto_refresh_enabled:
+            raise HTTPException(status_code=400, detail="Saved-file refresh is disabled in the editor profile")
+        payload = refresh_saved_projects(session, settings=request_settings(request, session), project_id=project_id)
         if payload["errors"]:
             return JSONResponse(status_code=400, content=payload)
         return payload

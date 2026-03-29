@@ -7,6 +7,7 @@ from sqlalchemy import or_, select
 from .models import (
     ActionItem,
     DecisionItem,
+    EditorProfile,
     ImportRun,
     Milestone,
     OutboundDraft,
@@ -28,6 +29,10 @@ def list_projects(session):
 
 def get_project(session, project_id: int):
     return session.get(Project, project_id)
+
+
+def get_editor_profile_by_username(session, username: str):
+    return session.scalar(select(EditorProfile).where(EditorProfile.username == username).limit(1))
 
 
 def get_project_by_key(session, key: str):

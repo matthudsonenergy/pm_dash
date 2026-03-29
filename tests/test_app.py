@@ -16,6 +16,7 @@ from pm_dashboard.main import create_app, request_access_role, request_is_author
 from pm_dashboard.models import Project
 from pm_dashboard.services import (
     ActionCreate,
+    EditorProfileUpdate,
     ProjectCreate,
     ResourceCreate,
     TaskCreate,
@@ -26,6 +27,9 @@ from pm_dashboard.services import (
     delete_project,
     delete_resource,
     delete_task,
+    effective_settings_for_profile,
+    get_or_create_editor_profile,
+    update_editor_profile,
 )
 
 
@@ -170,6 +174,62 @@ def test_create_action_requires_editor(auth_settings):
             asyncio.run(route.endpoint(project_id=1, request=request, session=session))
 
     assert exc_info.value.status_code == 403
+
+
+def test_settings_page_requires_editor(auth_settings):
+    app = create_app(auth_settings)
+    route = route_for(app, "/settings")
+    request = make_request(
+        app,
+        "/settings",
+        headers=basic_auth_headers(username="team", password="readonly"),
+    )
+    with app.state.session_factory() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            route.endpoint(request=request, session=session)
+
+    assert exc_info.value.status_code == 403
+
+
+def test_settings_page_loads_for_editor(auth_settings):
+    app = create_app(auth_settings)
+    route = route_for(app, "/settings")
+    request = make_request(
+        app,
+        "/settings",
+        headers=basic_auth_headers(),
+    )
+    with app.state.session_factory() as session:
+        response = route.endpoint(request=request, session=session)
+
+    assert response.status_code == 200
+    assert "Editor Settings" in response.body.decode("utf-8")
+
+
+def test_editor_profile_persists_and_changes_effective_settings(app):
+    with app.state.session_factory() as session:
+        profile = get_or_create_editor_profile(session, "pm", app.state.settings)
+        updated = update_editor_profile(
+            session,
+            profile,
+            EditorProfileUpdate(
+                display_name="Matthew",
+                stale_plan_days=3,
+                upcoming_milestone_days=14,
+                slip_from_previous_days=2,
+                slip_from_baseline_days=4,
+                auto_refresh_enabled=False,
+                auto_generate_outbound_drafts=False,
+                auto_generate_executive_summary=True,
+                show_attention_explainers=False,
+            ),
+        )
+        effective = effective_settings_for_profile(app.state.settings, updated)
+
+    assert updated.display_name == "Matthew"
+    assert updated.auto_refresh_enabled is False
+    assert effective.stale_plan_days == 3
+    assert effective.upcoming_milestone_days == 14
 
 
 def test_multi_file_import_endpoint_imports_each_file(monkeypatch, app):

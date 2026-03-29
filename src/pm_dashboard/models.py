@@ -49,6 +49,24 @@ class Project(Base):
     )
 
 
+class EditorProfile(Base):
+    __tablename__ = "editor_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(150), unique=True, index=True)
+    display_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    stale_plan_days: Mapped[int] = mapped_column(Integer(), default=7)
+    upcoming_milestone_days: Mapped[int] = mapped_column(Integer(), default=30)
+    slip_from_previous_days: Mapped[int] = mapped_column(Integer(), default=3)
+    slip_from_baseline_days: Mapped[int] = mapped_column(Integer(), default=5)
+    auto_refresh_enabled: Mapped[bool] = mapped_column(Boolean(), default=True)
+    auto_generate_outbound_drafts: Mapped[bool] = mapped_column(Boolean(), default=True)
+    auto_generate_executive_summary: Mapped[bool] = mapped_column(Boolean(), default=True)
+    show_attention_explainers: Mapped[bool] = mapped_column(Boolean(), default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow, onupdate=utcnow)
+
+
 class ScheduleSnapshot(Base):
     __tablename__ = "schedule_snapshots"
 
