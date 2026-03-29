@@ -106,8 +106,8 @@
               <dd>{{ project.days_to_next_milestone if project.days_to_next_milestone is not none else "N/A" }}</dd>
             </div>
             <div>
-              <dt>Upload date</dt>
-              <dd>{{ project.project_file.updated_at[:10] if project.project_file and project.project_file.updated_at else "Not uploaded" }}</dd>
+              <dt>Refresh</dt>
+              <dd>{{ project.refresh_status.label }}</dd>
             </div>
           </dl>
           <div class="card-highlight">
@@ -134,6 +134,10 @@
               <dd>{{ project.project_file.filename if project.project_file else "None saved" }}</dd>
             </div>
             <div>
+              <dt>Last refresh</dt>
+              <dd>{{ project.refresh_status.last_successful_import_at[:10] if project.refresh_status.last_successful_import_at else "Never" }}</dd>
+            </div>
+            <div>
               <dt>Overdue actions</dt>
               <dd>{{ project.overdue_actions_count }}</dd>
             </div>
@@ -146,6 +150,15 @@
               <dd>{{ project.open_decisions_count }}</dd>
             </div>
           </dl>
+          <div class="metric-block">
+            <p class="mini-label">Refresh signal</p>
+            <p class="helper">
+              {{ project.refresh_status.label }}
+              {% if project.refresh_status.last_failed_error %}
+                | Last failure: {{ project.refresh_status.last_failed_error }}
+              {% endif %}
+            </p>
+          </div>
           <div class="metric-block">
             <p class="mini-label">Leadership surprise drivers</p>
             <ul>

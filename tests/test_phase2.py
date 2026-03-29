@@ -16,8 +16,13 @@ from pm_dashboard.services import (
     create_decision,
     create_risk,
     dismiss_suggestion,
+    group_suggestions,
     import_schedule,
     project_workflow_view,
+    refresh_saved_projects,
+    refresh_status_summary,
+    review_suggestions_batch,
+    upsert_project_file,
     upsert_weekly_update,
 )
 
@@ -269,3 +274,53 @@ def test_attention_queue_includes_phase2_signals(app):
     assert "Missing Weekly Update" in categories
     assert "Overdue Decisions" in categories
     assert "Worsening Risks" in categories
+
+
+def test_refresh_saved_projects_updates_freshness(monkeypatch, app):
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "p2c").one()
+        upsert_project_file(
+            session,
+            project,
+            filename="P2C.mpp",
+            content=b"placeholder mpp payload",
+            content_type="application/octet-stream",
+        )
+
+        def fake_parse(*args, **kwargs):
+            return fake_parsed_project(date(2026, 3, 24))
+
+        monkeypatch.setattr("pm_dashboard.services.parse_mpp_file", fake_parse)
+        payload = refresh_saved_projects(session, settings=app.state.settings)
+        summary = refresh_status_summary(session, settings=app.state.settings, today=date.today())
+
+    assert payload["count"] == 1
+    assert any(row["project_name"] == "P2C" and row["state"] == "fresh" for row in summary["projects"])
+
+
+def test_batch_review_accepts_selected_suggestions(app):
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "p2c").one()
+        weekly_update = upsert_weekly_update(
+            session,
+            project,
+            WeeklyUpdateCreate(
+                week_start=date(2026, 3, 24),
+                status_summary="Need follow-up.",
+                blockers="Vendor still blocked",
+                approvals_needed=None,
+                follow_ups="Matt to send weekly status by 2026-03-28",
+                confidence_note=None,
+                meeting_notes=None,
+                status_notes=None,
+            ),
+            settings=app.state.settings,
+        )
+        suggestions = list_suggestions(session, weekly_update_id=weekly_update.id)
+        suggestion_ids = [item.id for item in suggestions if item.suggestion_type in {"action", "risk"}]
+        reviewed = review_suggestions_batch(session, suggestion_ids=suggestion_ids, action="accept")
+        workflow = project_workflow_view(session, project, settings=app.state.settings, week_start=date(2026, 3, 24))
+
+    assert len(reviewed) == 2
+    assert all(item["status"] == "accepted" for item in reviewed)
+    assert any(group["label"] == "Action" for group in group_suggestions(workflow["suggestions"]))

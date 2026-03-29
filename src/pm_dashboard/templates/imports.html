@@ -7,6 +7,9 @@
       <h2>Upload a native MS Project file and refresh the portfolio snapshot.</h2>
       <p class="subtle">Parser ready: {{ "Yes" if parser_ready else "No" }}</p>
     </div>
+    <div class="hero-actions">
+      <button id="refresh-saved-files" type="button" class="hero-link">Refresh saved files</button>
+    </div>
   </section>
 
   <section class="two-up">
@@ -63,6 +66,10 @@
 
     <article class="panel">
       <h3>Import History</h3>
+      <p class="helper">
+        Eligible {{ refresh_summary.eligible_count }} | Fresh {{ refresh_summary.fresh_count }} |
+        Stale {{ refresh_summary.stale_count }} | Missing {{ refresh_summary.missing_count }}
+      </p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -90,6 +97,44 @@
         </table>
       </div>
     </article>
+  </section>
+
+  <section class="panel">
+    <h3>Refresh Status</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>State</th>
+            <th>Saved file</th>
+            <th>Last success</th>
+            <th>Last failure</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in refresh_summary.projects %}
+            <tr>
+              <td>{{ row.project_name }}</td>
+              <td>{{ row.label }}</td>
+              <td>{{ row.saved_file.filename if row.saved_file else "None" }}</td>
+              <td>{{ row.last_successful_import_at or "-" }}</td>
+              <td>{{ row.last_failed_error or "-" }}</td>
+              <td>
+                {% if row.eligible %}
+                  <button type="button" class="ghost-btn refresh-project-btn" data-project-id="{{ row.project_id }}">Refresh</button>
+                {% else %}
+                  <span class="helper">Needs file</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6">No projects available.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <section class="panel">
@@ -197,6 +242,7 @@
 
   <script>
     const importForm = document.getElementById("import-form");
+    const refreshSavedFilesButton = document.getElementById("refresh-saved-files");
     const fileInput = document.getElementById("file-input");
     const dropZone = document.getElementById("drop-zone");
     const selectedFiles = document.getElementById("selected-files");
@@ -264,6 +310,30 @@
           alert(payload.error || "Import failed");
         }
       }
+    });
+
+    if (refreshSavedFilesButton) {
+      refreshSavedFilesButton.addEventListener("click", async () => {
+        const response = await fetch("/api/imports/refresh", { method: "POST" });
+        const payload = await response.json();
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert((payload.errors || []).map((item) => `${item.project_name}: ${item.error}`).join("\n") || "Refresh failed");
+        }
+      });
+    }
+
+    document.querySelectorAll(".refresh-project-btn").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const response = await fetch(`/api/imports/refresh?project_id=${button.dataset.projectId}`, { method: "POST" });
+        const payload = await response.json();
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert((payload.errors || []).map((item) => `${item.project_name}: ${item.error}`).join("\n") || "Refresh failed");
+        }
+      });
     });
 
     async function submitAndRefresh(url, method, formData = null) {

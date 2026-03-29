@@ -152,6 +152,17 @@ class ResourceCreate:
     key: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class RefreshRunResult:
+    project_id: int
+    project_name: str
+    source_filename: str
+    status: str
+    import_run_id: Optional[int] = None
+    project_file: Optional[dict] = None
+    error: Optional[str] = None
+
+
 def ensure_storage(settings: Settings) -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +193,14 @@ def parse_date(value: Optional[str]) -> Optional[date]:
     if not value:
         return None
     return date.fromisoformat(value)
+
+
+def normalize_multiline_text(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    lines = [line.rstrip() for line in value.replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    trimmed = "\n".join(line for line in lines if line.strip())
+    return trimmed or None
 
 
 def truthy(value: Any) -> bool:
@@ -923,6 +942,151 @@ def serialize_portfolio_summary_draft(draft: PortfolioSummaryDraft) -> dict:
     }
 
 
+def refresh_status_for_project(
+    session,
+    project: Project,
+    *,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+) -> dict:
+    settings = settings or get_settings()
+    today = today or date.today()
+    project_file = get_project_file(session, project.id)
+    latest_snapshot = get_latest_snapshot(session, project.id)
+    latest_success = latest_snapshot.imported_at if latest_snapshot else None
+    project_runs = [run for run in list_import_runs(session, limit=200) if run.project_id == project.id]
+    latest_failed = next((run for run in project_runs if run.status == "failed"), None)
+
+    if not project_file:
+        state = "missing_file"
+        label = "No saved file"
+    elif latest_success is None:
+        state = "missing"
+        label = "No successful refresh yet"
+    elif is_stale(today, latest_success.date(), settings.stale_plan_days):
+        state = "stale"
+        label = "Refresh overdue"
+    else:
+        state = "fresh"
+        label = "Fresh"
+
+    return {
+        "project_id": project.id,
+        "project_name": project.name,
+        "eligible": project_file is not None,
+        "state": state,
+        "label": label,
+        "last_successful_import_at": latest_success.isoformat() if latest_success else None,
+        "last_failed_import_at": latest_failed.started_at.isoformat() if latest_failed and latest_failed.started_at else None,
+        "last_failed_error": latest_failed.error_message if latest_failed else None,
+        "saved_file": serialize_project_file(project_file),
+    }
+
+
+def refresh_status_summary(
+    session,
+    *,
+    settings: Settings | None = None,
+    today: Optional[date] = None,
+) -> dict:
+    rows = [refresh_status_for_project(session, project, settings=settings, today=today) for project in list_projects(session)]
+    return {
+        "projects": rows,
+        "eligible_count": sum(1 for row in rows if row["eligible"]),
+        "fresh_count": sum(1 for row in rows if row["state"] == "fresh"),
+        "stale_count": sum(1 for row in rows if row["state"] == "stale"),
+        "missing_count": sum(1 for row in rows if row["state"] in {"missing", "missing_file"}),
+        "failed_count": sum(1 for row in rows if row["last_failed_import_at"]),
+    }
+
+
+def refresh_project_from_saved_file(
+    session,
+    project: Project,
+    *,
+    settings: Settings | None = None,
+) -> RefreshRunResult:
+    settings = settings or get_settings()
+    project_file = get_project_file(session, project.id)
+    if not project_file:
+        return RefreshRunResult(
+            project_id=project.id,
+            project_name=project.name,
+            source_filename=f"{project.key}.mpp",
+            status="skipped",
+            error="No saved project file is available",
+        )
+
+    saved_file = materialize_project_file(project_file.filename, project_file.file_blob, settings)
+    try:
+        run = import_schedule(
+            session,
+            project,
+            saved_file,
+            source_filename=project_file.filename,
+            settings=settings,
+            source_path=f"db://project-files/{project_file.id}/{project_file.filename}",
+            source_checksum=project_file.checksum,
+        )
+        return RefreshRunResult(
+            project_id=project.id,
+            project_name=project.name,
+            source_filename=project_file.filename,
+            status=run.status,
+            import_run_id=run.id,
+            project_file=serialize_project_file(project_file),
+        )
+    except Exception as exc:
+        return RefreshRunResult(
+            project_id=project.id,
+            project_name=project.name,
+            source_filename=project_file.filename,
+            status="failed",
+            project_file=serialize_project_file(project_file),
+            error=str(exc),
+        )
+    finally:
+        saved_file.unlink(missing_ok=True)
+
+
+def refresh_saved_projects(
+    session,
+    *,
+    settings: Settings | None = None,
+    project_id: int | None = None,
+) -> dict:
+    settings = settings or get_settings()
+    projects = [get_project_or_404(session, project_id)] if project_id is not None else list_projects(session)
+    results: list[dict] = []
+    errors: list[dict] = []
+    skipped: list[dict] = []
+
+    for project in projects:
+        result = refresh_project_from_saved_file(session, project, settings=settings)
+        payload = {
+            "project_id": result.project_id,
+            "project_name": result.project_name,
+            "source_filename": result.source_filename,
+            "status": result.status,
+            "import_run_id": result.import_run_id,
+            "project_file": result.project_file,
+            "error": result.error,
+        }
+        if result.status == "success":
+            results.append(payload)
+        elif result.status == "skipped":
+            skipped.append(payload)
+        else:
+            errors.append(payload)
+
+    return {
+        "results": results,
+        "errors": errors,
+        "skipped": skipped,
+        "count": len(results),
+    }
+
+
 def _extract_owner_due_title(line: str) -> tuple[str, Optional[str], Optional[date], list[str]]:
     raw = line.strip()
     missing: list[str] = []
@@ -1219,13 +1383,13 @@ def upsert_weekly_update(
         session.add(weekly_update)
         session.flush()
 
-    weekly_update.status_summary = payload.status_summary
-    weekly_update.blockers = payload.blockers
-    weekly_update.approvals_needed = payload.approvals_needed
-    weekly_update.follow_ups = payload.follow_ups
-    weekly_update.confidence_note = payload.confidence_note
-    weekly_update.meeting_notes = payload.meeting_notes
-    weekly_update.status_notes = payload.status_notes
+    weekly_update.status_summary = normalize_multiline_text(payload.status_summary)
+    weekly_update.blockers = normalize_multiline_text(payload.blockers)
+    weekly_update.approvals_needed = normalize_multiline_text(payload.approvals_needed)
+    weekly_update.follow_ups = normalize_multiline_text(payload.follow_ups)
+    weekly_update.confidence_note = normalize_multiline_text(payload.confidence_note)
+    weekly_update.meeting_notes = normalize_multiline_text(payload.meeting_notes)
+    weekly_update.status_notes = normalize_multiline_text(payload.status_notes)
     weekly_update.needs_escalation = payload.needs_escalation
     weekly_update.leadership_watch = payload.leadership_watch
 
@@ -1248,13 +1412,13 @@ def update_weekly_update(
         raise HTTPException(status_code=400, detail="A weekly update already exists for that project/week")
 
     weekly_update.week_start = payload.week_start
-    weekly_update.status_summary = payload.status_summary
-    weekly_update.blockers = payload.blockers
-    weekly_update.approvals_needed = payload.approvals_needed
-    weekly_update.follow_ups = payload.follow_ups
-    weekly_update.confidence_note = payload.confidence_note
-    weekly_update.meeting_notes = payload.meeting_notes
-    weekly_update.status_notes = payload.status_notes
+    weekly_update.status_summary = normalize_multiline_text(payload.status_summary)
+    weekly_update.blockers = normalize_multiline_text(payload.blockers)
+    weekly_update.approvals_needed = normalize_multiline_text(payload.approvals_needed)
+    weekly_update.follow_ups = normalize_multiline_text(payload.follow_ups)
+    weekly_update.confidence_note = normalize_multiline_text(payload.confidence_note)
+    weekly_update.meeting_notes = normalize_multiline_text(payload.meeting_notes)
+    weekly_update.status_notes = normalize_multiline_text(payload.status_notes)
     weekly_update.needs_escalation = payload.needs_escalation
     weekly_update.leadership_watch = payload.leadership_watch
     session.commit()
@@ -1335,6 +1499,63 @@ def dismiss_suggestion(session, suggestion: SuggestionItem) -> SuggestionItem:
     session.commit()
     session.refresh(suggestion)
     return suggestion
+
+
+def review_suggestions_batch(
+    session,
+    *,
+    suggestion_ids: list[int],
+    action: str,
+    payload_overrides: Optional[dict[int, dict]] = None,
+) -> list[dict]:
+    if action not in {"accept", "dismiss"}:
+        raise HTTPException(status_code=400, detail="Unsupported batch action")
+    if not suggestion_ids:
+        raise HTTPException(status_code=400, detail="suggestion_ids is required")
+
+    payload_overrides = payload_overrides or {}
+    reviewed: list[dict] = []
+    for suggestion_id in suggestion_ids:
+        suggestion = get_suggestion_or_404(session, suggestion_id)
+        if suggestion.status != "pending":
+            raise HTTPException(status_code=400, detail=f"Suggestion {suggestion_id} is not pending")
+        if action == "accept":
+            suggestion = accept_suggestion(session, suggestion, payload_override=payload_overrides.get(suggestion_id))
+        else:
+            suggestion = dismiss_suggestion(session, suggestion)
+        reviewed.append(serialize_suggestion(suggestion))
+    return reviewed
+
+
+def group_suggestions(suggestions: list[dict]) -> list[dict]:
+    order = ["action", "risk", "decision", "summary", "reminder"]
+    grouped: list[dict] = []
+    for suggestion_type in order:
+        items = [item for item in suggestions if item["suggestion_type"] == suggestion_type]
+        if items:
+            grouped.append(
+                {
+                    "suggestion_type": suggestion_type,
+                    "label": suggestion_type.replace("_", " ").title(),
+                    "count": len(items),
+                    "pending_count": sum(1 for item in items if item["status"] == "pending"),
+                    "items": items,
+                }
+            )
+    leftovers = [
+        suggestion for suggestion in suggestions if suggestion["suggestion_type"] not in set(order)
+    ]
+    if leftovers:
+        grouped.append(
+            {
+                "suggestion_type": "other",
+                "label": "Other",
+                "count": len(leftovers),
+                "pending_count": sum(1 for item in leftovers if item["status"] == "pending"),
+                "items": leftovers,
+            }
+        )
+    return grouped
 
 
 def _health_score(
@@ -1482,6 +1703,7 @@ def project_summary(
     overdue_actions = [action for action in actions if action.due_date and action.due_date < today]
     latest_import_date = snapshot.imported_at.date() if snapshot else None
     stale_plan = is_stale(today, latest_import_date, settings.stale_plan_days)
+    refresh_status = refresh_status_for_project(session, project, settings=settings, today=today)
 
     material_slips = 0
     upcoming_milestones = 0
@@ -1584,6 +1806,7 @@ def project_summary(
         "health_trend_score": trend["slope"],
         "health_trend_history": trend["history"] if include_health_history else None,
         "leadership_surprise_indicator": leadership_surprise,
+        "refresh_status": refresh_status,
     }
 
 
@@ -1659,6 +1882,7 @@ def project_detail(
     settings = settings or get_settings()
     today = today or date.today()
     summary = project_summary(session, project, settings, today=today)
+    refresh_status = summary["refresh_status"]
     snapshot = get_latest_snapshot(session, project.id)
     actions = [serialize_action(action) for action in list_actions(session, project.id, include_closed=True)]
     risks = [serialize_risk(risk) for risk in list_risks(session, project.id, include_closed=True)[:10]]
@@ -1735,6 +1959,7 @@ def project_detail(
     return {
         "summary": summary,
         "project_file": serialize_project_file(get_project_file(session, project.id)),
+        "refresh_status": refresh_status,
         "actions": actions,
         "risks": risks,
         "decisions": decisions,
@@ -1760,6 +1985,7 @@ def project_workflow_view(
         for item in list_suggestions(session, project_id=project.id)
         if not item.weekly_update_id or (item.weekly_update and item.weekly_update.week_start == selected_week)
     ]
+    suggestion_groups = group_suggestions(suggestions)
     risks = [serialize_risk(item) for item in list_risks(session, project.id, include_closed=True)]
     decisions = [serialize_decision(item) for item in list_decisions(session, project.id, include_closed=True)]
     milestone_changes = build_milestone_change_summary(session, project, settings)
@@ -1768,7 +1994,16 @@ def project_workflow_view(
         "weekly_update": serialize_weekly_update(weekly_update) if weekly_update else None,
         "weekly_update_history": history,
         "suggestions": suggestions,
+        "suggestion_groups": suggestion_groups,
         "pending_suggestions": [item for item in suggestions if item["status"] == "pending"],
+        "pending_suggestion_groups": [
+            {
+                **group,
+                "items": [item for item in group["items"] if item["status"] == "pending"],
+            }
+            for group in suggestion_groups
+            if any(item["status"] == "pending" for item in group["items"])
+        ],
         "risks": risks,
         "decisions": decisions,
         "milestone_changes": milestone_changes,
@@ -1791,6 +2026,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
     risks_watch = []
     reminders = []
     total_material_slips = 0
+    refresh_summary = refresh_status_summary(session, settings=settings, today=today)
 
     for project in projects:
         summary = project_summary(session, project, settings=settings, today=today)
@@ -1855,6 +2091,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
                 "summary_draft": summary_draft,
                 "reminders": project_reminders,
                 "pending_suggestions": pending_suggestions,
+                "refresh_status": summary["refresh_status"],
             }
         )
 
@@ -1879,6 +2116,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
         "risks_watch": sorted(risks_watch, key=lambda item: (severity_rank(item["severity"]), item["title"])),
         "reminders": reminders,
         "portfolio_summary": portfolio_summary,
+        "refresh_summary": refresh_summary,
         "deteriorating_projects": deteriorating,
         "executive_summary_draft": get_latest_portfolio_summary_draft(session, selected_week, status="pending"),
         "executive_summary_final": get_latest_portfolio_summary_draft(session, selected_week, status="accepted"),

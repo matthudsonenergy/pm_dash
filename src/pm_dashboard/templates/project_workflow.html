@@ -6,6 +6,7 @@
       <p class="eyebrow">Project Workflow</p>
       <h2>{{ project.name }}</h2>
       <p class="subtle">Week of {{ workflow.selected_week_start }} | Pending suggestions {{ workflow.pending_suggestions|length }}</p>
+      <p class="helper">Refresh status: {{ workflow.summary.refresh_status.label }}</p>
     </div>
     <div class="hero-actions">
       <a class="hero-link" href="/projects/{{ project.id }}">Back to detail</a>
@@ -20,8 +21,8 @@
           <input type="date" name="week_start" value="{{ workflow.selected_week_start }}" required>
           <textarea name="status_summary" placeholder="Status summary">{{ workflow.weekly_update.status_summary if workflow.weekly_update else "" }}</textarea>
           <textarea name="blockers" placeholder="Blockers, one per line">{{ workflow.weekly_update.blockers if workflow.weekly_update else "" }}</textarea>
-          <textarea name="approvals_needed" placeholder="Approvals needed, one per line">{{ workflow.weekly_update.approvals_needed if workflow.weekly_update else "" }}</textarea>
-          <textarea name="follow_ups" placeholder="Follow-ups, one per line">{{ workflow.weekly_update.follow_ups if workflow.weekly_update else "" }}</textarea>
+          <textarea name="approvals_needed" placeholder="Approvals needed, one per line. Example: Decision: approve weekend install | owner: Matt | due: 2026-03-27">{{ workflow.weekly_update.approvals_needed if workflow.weekly_update else "" }}</textarea>
+          <textarea name="follow_ups" placeholder="Follow-ups, one per line. Example: Matt to send revised status by 2026-03-26">{{ workflow.weekly_update.follow_ups if workflow.weekly_update else "" }}</textarea>
           <textarea name="confidence_note" placeholder="Confidence note">{{ workflow.weekly_update.confidence_note if workflow.weekly_update else "" }}</textarea>
           <textarea name="meeting_notes" placeholder="Meeting notes">{{ workflow.weekly_update.meeting_notes if workflow.weekly_update else "" }}</textarea>
           <textarea name="status_notes" placeholder="Status notes">{{ workflow.weekly_update.status_notes if workflow.weekly_update else "" }}</textarea>
@@ -64,35 +65,56 @@
   <section class="two-up">
     <article class="panel">
       <h3>Pending Suggestions</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Title</th>
-              <th>Rationale</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for item in workflow.pending_suggestions %}
-              <tr>
-                <td>{{ item.suggestion_type }}</td>
-                <td>{{ item.title }}</td>
-                <td>{{ item.rationale }}</td>
-                <td class="action-cell">
+      {% for group in workflow.pending_suggestion_groups %}
+        <section class="suggestion-group">
+          <div class="suggestion-group-head">
+            <div>
+              <p class="mini-label">{{ group.label }}</p>
+              <h4>{{ group.count }} pending</h4>
+            </div>
+            {% if can_edit %}
+              <div class="action-cell">
+                <button type="button" class="ghost-btn group-select-toggle" data-group="{{ group.suggestion_type }}">Select all</button>
+                <button type="button" class="ghost-btn batch-suggestion-action" data-group="{{ group.suggestion_type }}" data-action="accept">Accept selected</button>
+                <button type="button" class="ghost-btn batch-suggestion-action" data-group="{{ group.suggestion_type }}" data-action="dismiss">Dismiss selected</button>
+              </div>
+            {% endif %}
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
                   {% if can_edit %}
-                    <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="accept">Accept</button>
-                    <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="dismiss">Dismiss</button>
+                    <th></th>
                   {% endif %}
-                </td>
-              </tr>
-            {% else %}
-              <tr><td colspan="4">No pending suggestions for this week.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+                  <th>Title</th>
+                  <th>Rationale</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in group.items %}
+                  <tr>
+                    {% if can_edit %}
+                      <td><input type="checkbox" class="suggestion-checkbox" data-group="{{ group.suggestion_type }}" value="{{ item.id }}"></td>
+                    {% endif %}
+                    <td>{{ item.title }}</td>
+                    <td>{{ item.rationale }}</td>
+                    <td class="action-cell">
+                      {% if can_edit %}
+                        <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="accept">Accept</button>
+                        <button class="ghost-btn suggestion-action" data-suggestion-id="{{ item.id }}" data-action="dismiss">Dismiss</button>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      {% else %}
+        <p class="helper">No pending suggestions for this week.</p>
+      {% endfor %}
     </article>
 
     <article class="panel">
@@ -212,6 +234,38 @@
           window.location.reload();
         } else {
           alert(`Failed to ${action} suggestion`);
+        }
+      });
+    });
+
+    document.querySelectorAll(".group-select-toggle").forEach((button) => {
+      button.addEventListener("click", () => {
+        const checkboxes = Array.from(document.querySelectorAll(`.suggestion-checkbox[data-group="${button.dataset.group}"]`));
+        const shouldSelect = checkboxes.some((checkbox) => !checkbox.checked);
+        checkboxes.forEach((checkbox) => {
+          checkbox.checked = shouldSelect;
+        });
+      });
+    });
+
+    document.querySelectorAll(".batch-suggestion-action").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const selected = Array.from(document.querySelectorAll(`.suggestion-checkbox[data-group="${button.dataset.group}"]:checked`))
+          .map((checkbox) => checkbox.value);
+        if (!selected.length) {
+          alert("Select at least one suggestion");
+          return;
+        }
+        const response = await fetch("/api/suggestions/batch-review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ suggestion_ids: selected, action: button.dataset.action }),
+        });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          const payload = await response.json().catch(() => ({}));
+          alert(payload.detail || "Batch review failed");
         }
       });
     });

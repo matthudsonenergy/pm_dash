@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import secrets
+import tempfile
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -14,7 +15,9 @@ from sqlalchemy import text
 
 from .config import Settings, get_settings
 from .database import init_db, make_engine, make_session_factory
+from .models import Project
 from .projects import repo_file_project_rows
+from .projects import PROJECTS
 from .repository import get_latest_snapshot, list_projects, list_resources, list_tasks_for_snapshot
 from .services import (
     ActionCreate,
@@ -34,6 +37,8 @@ from .services import (
     create_decision,
     create_task,
     create_risk,
+    refresh_saved_projects,
+    refresh_status_summary,
     dependencies_view,
     current_week_start,
     detect_resource_conflicts,
@@ -55,7 +60,6 @@ from .services import (
     project_detail,
     project_workflow_view,
     resolve_project_for_import,
-    materialize_project_file,
     serialize_decision,
     serialize_project,
     serialize_resource,
@@ -73,13 +77,45 @@ from .services import (
     delete_project,
     delete_resource,
     delete_task,
+    review_suggestions_batch,
     get_portfolio_summary_draft_or_404,
     serialize_project_file,
     upsert_project_file,
+    materialize_project_file,
 )
 
 
 AccessRole = Literal["editor", "viewer"]
+
+
+def save_upload(upload: UploadFile, settings: Settings) -> Path:
+    suffix = Path(upload.filename or "project.mpp").suffix or ".mpp"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix, dir=settings.uploads_dir) as handle:
+        while True:
+            chunk = upload.file.read(65536)
+            if not chunk:
+                break
+            handle.write(chunk)
+    upload.file.seek(0)
+    return Path(handle.name)
+
+
+def seed_default_projects(session) -> None:
+    existing = {project.key for project in list_projects(session)}
+    created = False
+    for definition in PROJECTS:
+        if definition.key in existing:
+            continue
+        session.add(
+            Project(
+                key=definition.key,
+                name=definition.name,
+                description=definition.description,
+            )
+        )
+        created = True
+    if created:
+        session.commit()
 
 
 def auth_accounts(settings: Settings) -> list[tuple[AccessRole, str, str]]:
@@ -129,6 +165,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     engine = make_engine(settings.db_url)
     session_factory = make_session_factory(engine)
     init_db(engine)
+    with session_factory() as session:
+        seed_default_projects(session)
 
     app.state.settings = settings
     app.state.engine = engine
@@ -319,6 +357,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "project_tasks": project_tasks,
                 "project_resources": {project.id: list_resources(session, project.id) for project in projects},
                 "project_files": {project.id: serialize_project_file(project.project_files[0] if project.project_files else None) for project in projects},
+                "refresh_summary": refresh_status_summary(session, settings=app.state.settings),
                 "projects_nav": projects,
             },
         )
@@ -513,6 +552,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         suggestion = dismiss_suggestion(session, suggestion)
         return serialize_suggestion(suggestion)
 
+    @app.post("/api/suggestions/batch-review")
+    async def batch_review_suggestions_api(request: Request, session=Depends(get_session)):
+        require_editor(request)
+        data = await request_data(request)
+        suggestion_ids_raw = data.get("suggestion_ids") or []
+        if isinstance(suggestion_ids_raw, str):
+            suggestion_ids_raw = [item.strip() for item in suggestion_ids_raw.split(",") if item.strip()]
+        suggestion_ids = [int(item) for item in suggestion_ids_raw]
+        action = data.get("action")
+        payload_overrides_raw = data.get("payload_overrides") if isinstance(data.get("payload_overrides"), dict) else {}
+        payload_overrides = {int(key): value for key, value in payload_overrides_raw.items()}
+        reviewed = review_suggestions_batch(
+            session,
+            suggestion_ids=suggestion_ids,
+            action=action,
+            payload_overrides=payload_overrides,
+        )
+        return {"count": len(reviewed), "suggestions": reviewed}
+
     @app.post("/api/portfolio/executive-summary/generate")
     def generate_executive_summary_api(request: Request, week_start: str | None = None, session=Depends(get_session)):
         require_editor(request)
@@ -639,6 +697,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         for file in files:
             source_filename = file.filename or ""
             project = resolve_project_for_import(session, source_filename=source_filename, project_id=project_id)
+            saved_file = save_upload(file, app.state.settings)
             file_bytes = await file.read()
             project_file = upsert_project_file(
                 session,
@@ -647,21 +706,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 content=file_bytes,
                 content_type=file.content_type,
             )
-            saved_file = materialize_project_file(
-                project_file.filename,
-                project_file.file_blob,
-                app.state.settings,
-            )
             try:
-                run = import_schedule(
-                    session,
-                    project,
-                    saved_file,
-                    source_filename=project_file.filename,
-                    settings=app.state.settings,
-                    source_path=f"db://project-files/{project_file.id}/{project_file.filename}",
-                    source_checksum=project_file.checksum,
-                )
+                try:
+                    run = import_schedule(
+                        session,
+                        project,
+                        saved_file,
+                        source_filename=project_file.filename,
+                        settings=app.state.settings,
+                        source_path=f"db://project-files/{project_file.id}/{project_file.filename}",
+                        source_checksum=project_file.checksum,
+                    )
+                except TypeError as exc:
+                    if "unexpected keyword argument" not in str(exc):
+                        raise
+                    run = import_schedule(
+                        session,
+                        project,
+                        saved_file,
+                        source_filename=project_file.filename,
+                        settings=app.state.settings,
+                    )
                 results.append(
                     {
                         "import_run_id": run.id,
@@ -688,6 +753,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(status_code=400, content={"results": results, "errors": errors})
 
         return {"results": results, "count": len(results)}
+
+    @app.get("/api/imports/refresh-status")
+    def refresh_status_api(session=Depends(get_session)):
+        return refresh_status_summary(session, settings=app.state.settings)
+
+    @app.post("/api/imports/refresh")
+    def refresh_saved_files_api(request: Request, project_id: int | None = None, session=Depends(get_session)):
+        require_editor(request)
+        payload = refresh_saved_projects(session, settings=app.state.settings, project_id=project_id)
+        if payload["errors"]:
+            return JSONResponse(status_code=400, content=payload)
+        return payload
 
     return app
 

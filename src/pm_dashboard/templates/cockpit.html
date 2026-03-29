@@ -6,6 +6,11 @@
       <p class="eyebrow">Weekly PM Cockpit</p>
       <h2>Run the week from one working page.</h2>
       <p class="subtle">{{ cockpit.portfolio_summary }}</p>
+      <p class="helper">
+        Refresh coverage: {{ cockpit.refresh_summary.fresh_count }}/{{ cockpit.refresh_summary.eligible_count }} fresh,
+        {{ cockpit.refresh_summary.stale_count }} stale,
+        {{ cockpit.refresh_summary.missing_count }} missing.
+      </p>
     </div>
     <form class="inline-filter" method="get" action="/cockpit">
       <label>
@@ -137,7 +142,10 @@
               <td>{{ row.actions_due_this_week|length }} due / {{ row.overdue_actions|length }} overdue</td>
               <td>{{ row.decisions_to_force|length }}</td>
               <td>{{ row.risks_watch|length }}</td>
-              <td>{{ row.summary_draft or "No draft yet" }}</td>
+              <td>
+                <div>{{ row.summary_draft or "No draft yet" }}</div>
+                <div class="helper">Refresh: {{ row.refresh_status.label }}</div>
+              </td>
             </tr>
           {% endfor %}
         </tbody>

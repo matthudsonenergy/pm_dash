@@ -571,6 +571,30 @@ code {
   gap: 8px;
 }
 
+.suggestion-group {
+  margin-top: 18px;
+}
+
+.suggestion-group:first-of-type {
+  margin-top: 0;
+}
+
+.suggestion-group-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.suggestion-group-head h4 {
+  margin: 4px 0 0;
+}
+
+.suggestion-checkbox {
+  width: auto;
+}
+
 .simple-list {
   margin: 0;
   padding-left: 18px;
