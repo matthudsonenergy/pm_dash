@@ -1,33 +1,96 @@
 {% extends "base.html" %}
 {% block title %}Portfolio Overview{% endblock %}
 {% block content %}
-  <section class="hero">
-    <div>
-      <p class="eyebrow">Portfolio Overview</p>
-      
+  {% set counts = namespace(critical=0, watch=0, overdue=0, surprise=0) %}
+  {% for project in projects %}
+    {% if project.rag_status == "Red" %}
+      {% set counts.critical = counts.critical + 1 %}
+    {% endif %}
+    {% if project.rag_status == "Yellow" %}
+      {% set counts.watch = counts.watch + 1 %}
+    {% endif %}
+    {% if project.overdue_actions_count %}
+      {% set counts.overdue = counts.overdue + 1 %}
+    {% endif %}
+    {% if project.leadership_surprise_indicator.level in ["high", "medium"] %}
+      {% set counts.surprise = counts.surprise + 1 %}
+    {% endif %}
+  {% endfor %}
+
+  <section class="portfolio-hero">
+    <div class="portfolio-hero-copy">
+      <p class="eyebrow">Portfolio overview</p>
+      <h2>What needs intervention before it becomes executive noise.</h2>
+      <p class="subtle hero-summary">
+        Rank is driven by delivery confidence, open risk pressure, overdue actions, and leadership surprise indicators.
+      </p>
     </div>
-    <div class="hero-chip">Today {{ today }}</div>
+    <div class="portfolio-hero-meta">
+      <div class="hero-chip">Today {{ today }}</div>
+      <p class="hero-kicker">{{ projects|length }} active projects</p>
+    </div>
   </section>
 
-  <section class="card-grid">
+  <section class="portfolio-overview">
+    <div class="overview-stat">
+      <p class="mini-label">Critical status</p>
+      <strong>{{ counts.critical }}</strong>
+      <span>{{ "project" if counts.critical == 1 else "projects" }} in red</span>
+    </div>
+    <div class="overview-stat">
+      <p class="mini-label">Needs review</p>
+      <strong>{{ counts.watch }}</strong>
+      <span>{{ "project" if counts.watch == 1 else "projects" }} in yellow</span>
+    </div>
+    <div class="overview-stat">
+      <p class="mini-label">Overdue actions</p>
+      <strong>{{ counts.overdue }}</strong>
+      <span>{{ "project" if counts.overdue == 1 else "projects" }} carrying overdue work</span>
+    </div>
+    <div class="overview-stat">
+      <p class="mini-label">Leadership surprise</p>
+      <strong>{{ counts.surprise }}</strong>
+      <span>{{ "project" if counts.surprise == 1 else "projects" }} with medium or high escalation risk</span>
+    </div>
+  </section>
+
+  <section class="portfolio-utility">
+    <div>
+      <p class="mini-label">Portfolio pressure</p>
+      <h3>Active conflicts: {{ resource_conflicts|length }}</h3>
+      <p class="subtle">Shared ownership collisions and risk-heavy work should resolve before the next weekly review.</p>
+    </div>
+    <div class="utility-actions">
+      <a class="hero-link" href="/attention">Open attention queue</a>
+      <a class="hero-link hero-link-secondary" href="/dependencies">Review dependencies</a>
+    </div>
+  </section>
+
+  <section class="portfolio-list">
     {% for project in projects %}
-      <details class="card project-card">
+      <details class="project-card">
         <summary class="project-card-summary">
-          <div class="card-head">
-            <div>
-              <p class="mini-label">Attention Rank</p>
+          <div class="project-card-lead">
+            <div class="project-rank">
+              <p class="mini-label">Rank</p>
               <strong>#{{ project.needs_attention_rank }}</strong>
             </div>
-            <span class="rag rag-{{ project.rag_status|lower }}">{{ project.rag_status }}</span>
-          </div>
-          <div class="project-card-title">
-            <div>
-              <h3>{{ project.project_name }}</h3>
-              <p class="helper">
-                Click for detailed view
-              </p>
+            <div class="project-card-title">
+              <div>
+                <div class="project-title-row">
+                  <h3>{{ project.project_name }}</h3>
+                  <span class="rag rag-{{ project.rag_status|lower }}">{{ project.rag_status }}</span>
+                </div>
+                <p class="helper">
+                  {% if project.next_major_milestone %}
+                    Next milestone {{ project.next_major_milestone }}
+                  {% else %}
+                    No next milestone recorded
+                  {% endif %}
+                </p>
+              </div>
+              <span class="detail-toggle">Details</span>
             </div>
-            <span class="detail-toggle">Details</span>
           </div>
           <dl class="metric-list metric-list-compact">
             <div>
