@@ -65,7 +65,7 @@ def test_portfolio_route_loads(app):
 
     assert response.status_code == 200
     body = response.body.decode("utf-8")
-    assert "PM Control Tower" in body
+    assert "PM Portfolio" in body
     assert "P2C" in body
 
 
