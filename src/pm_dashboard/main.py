@@ -29,6 +29,7 @@ from .services import (
     WeeklyUpdateCreate,
     accept_suggestion,
     accept_portfolio_summary_draft,
+    accept_outbound_draft,
     attention_queue,
     cockpit_view,
     create_action,
@@ -44,6 +45,7 @@ from .services import (
     detect_resource_conflicts,
     dismiss_suggestion,
     dismiss_portfolio_summary_draft,
+    dismiss_outbound_draft,
     get_action_or_404,
     get_decision_or_404,
     get_project_or_404,
@@ -52,6 +54,8 @@ from .services import (
     get_suggestion_or_404,
     get_task_or_404,
     get_weekly_update_or_404,
+    get_outbound_draft_or_404,
+    generate_outbound_drafts,
     import_history,
     import_schedule,
     parse_date,
@@ -67,6 +71,7 @@ from .services import (
     serialize_suggestion,
     serialize_task,
     serialize_portfolio_summary_draft,
+    serialize_outbound_draft,
     serialize_weekly_update,
     truthy,
     update_action_status,
@@ -593,6 +598,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         draft = get_portfolio_summary_draft_or_404(session, draft_id)
         draft = dismiss_portfolio_summary_draft(session, draft)
         return serialize_portfolio_summary_draft(draft)
+
+    @app.get("/api/outbound-drafts")
+    def outbound_drafts_api(project_id: int | None = None, week_start: str | None = None, status: str | None = None, session=Depends(get_session)):
+        from .repository import list_outbound_drafts
+
+        selected_week = parse_date(week_start) if week_start else None
+        return [
+            serialize_outbound_draft(item)
+            for item in list_outbound_drafts(session, project_id=project_id, week_start=selected_week, status=status)
+        ]
+
+    @app.post("/api/outbound-drafts/generate")
+    def generate_outbound_drafts_api(
+        request: Request,
+        week_start: str | None = None,
+        project_id: int | None = None,
+        session=Depends(get_session),
+    ):
+        require_editor(request)
+        selected_week = parse_date(week_start) or current_week_start()
+        drafts = generate_outbound_drafts(session, week_start=selected_week, settings=app.state.settings, project_id=project_id)
+        return {"count": len(drafts), "drafts": drafts}
+
+    @app.post("/api/outbound-drafts/{draft_id}/accept")
+    async def accept_outbound_draft_api(draft_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
+        draft = get_outbound_draft_or_404(session, draft_id)
+        data = await request_data(request)
+        draft = accept_outbound_draft(
+            session,
+            draft,
+            title=data.get("title"),
+            message_text=data.get("message_text"),
+            audience_label=data.get("audience_label"),
+        )
+        return serialize_outbound_draft(draft)
+
+    @app.post("/api/outbound-drafts/{draft_id}/dismiss")
+    def dismiss_outbound_draft_api(draft_id: int, request: Request, session=Depends(get_session)):
+        require_editor(request)
+        draft = get_outbound_draft_or_404(session, draft_id)
+        draft = dismiss_outbound_draft(session, draft)
+        return serialize_outbound_draft(draft)
 
     @app.post("/api/projects/{project_id}/risks")
     async def create_risk_api(project_id: int, request: Request, session=Depends(get_session)):

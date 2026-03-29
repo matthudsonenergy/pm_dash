@@ -24,9 +24,22 @@
   <section class="two-up">
     <article class="panel">
       <h3>Executive Summary Draft</h3>
+      {% if can_edit %}
+        <div class="action-cell">
+          <button type="button" id="generate-executive-summary" class="ghost-btn">Generate draft</button>
+          {% if cockpit.executive_summary_draft %}
+            <button type="button" class="ghost-btn executive-summary-action" data-action="accept" data-draft-id="{{ cockpit.executive_summary_draft.id }}">Accept draft</button>
+            <button type="button" class="ghost-btn executive-summary-action" data-action="dismiss" data-draft-id="{{ cockpit.executive_summary_draft.id }}">Dismiss draft</button>
+          {% endif %}
+        </div>
+      {% endif %}
       {% if cockpit.executive_summary_draft %}
         <p><strong>Overall status:</strong> {{ cockpit.executive_summary_draft.draft.overall_status }}</p>
         <p><strong>Changes since last week:</strong> {{ cockpit.executive_summary_draft.draft.changes_since_last_week }}</p>
+        <label class="stack-form">
+          <span class="mini-label">PM overall status override</span>
+          <textarea id="executive-summary-override">{{ cockpit.executive_summary_draft.draft.overall_status }}</textarea>
+        </label>
         <p><strong>Top 3 risks:</strong></p>
         <ul>
           {% for risk in cockpit.executive_summary_draft.draft.top_3_risks %}
@@ -50,6 +63,13 @@
           {% else %}
             <li>No elevated watchlist items.</li>
           {% endfor %}
+        </ul>
+        <p><strong>Source trace:</strong></p>
+        <ul>
+          <li>Updates received: {{ cockpit.executive_summary_draft.draft.source_trace.updates_received if cockpit.executive_summary_draft.draft.source_trace else "N/A" }}</li>
+          <li>Projects in scope: {{ cockpit.executive_summary_draft.draft.source_trace.projects_in_scope if cockpit.executive_summary_draft.draft.source_trace else "N/A" }}</li>
+          <li>Material slips: {{ cockpit.executive_summary_draft.draft.source_trace.material_slips if cockpit.executive_summary_draft.draft.source_trace else "N/A" }}</li>
+          <li>Overdue actions: {{ cockpit.executive_summary_draft.draft.source_trace.overdue_actions if cockpit.executive_summary_draft.draft.source_trace else "N/A" }}</li>
         </ul>
       {% else %}
         <p class="subtle">No draft generated for this week yet.</p>
@@ -79,8 +99,13 @@
         <div><strong>{{ cockpit.review_groups.suggestions|length }}</strong><span>Suggestion reviews</span></div>
         <div><strong>{{ cockpit.review_groups.data_freshness|length }}</strong><span>Freshness gaps</span></div>
         <div><strong>{{ cockpit.review_groups.exceptions|length }}</strong><span>Exception items</span></div>
-        <div><strong>{{ cockpit.reminders|length }}</strong><span>Reminder drafts</span></div>
+        <div><strong>{{ cockpit.review_groups.outbound_drafts|length }}</strong><span>Outbound drafts</span></div>
       </div>
+      {% if can_edit %}
+        <div class="action-cell">
+          <button type="button" id="generate-outbound-drafts" class="ghost-btn">Generate outbound drafts</button>
+        </div>
+      {% endif %}
       <h4>Pending Suggestions</h4>
       <div class="table-wrap">
         <table>
@@ -122,6 +147,41 @@
           <li>No elevated exceptions.</li>
         {% endfor %}
       </ul>
+      <h4>Outbound Drafts</h4>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Type</th>
+              <th>Audience</th>
+              <th>Draft</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in cockpit.review_groups.outbound_drafts %}
+              <tr>
+                <td>{{ item.project_name or "Portfolio" }}</td>
+                <td>{{ item.draft_type }}</td>
+                <td>{{ item.audience_label }}</td>
+                <td>
+                  <strong>{{ item.title }}</strong>
+                  <div class="helper">{{ item.message_text }}</div>
+                </td>
+                <td class="action-cell">
+                  {% if can_edit %}
+                    <button type="button" class="ghost-btn outbound-draft-action" data-action="accept" data-draft-id="{{ item.id }}">Accept</button>
+                    <button type="button" class="ghost-btn outbound-draft-action" data-action="dismiss" data-draft-id="{{ item.id }}">Dismiss</button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5">No outbound drafts for this week.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </article>
 
     <article class="panel">
@@ -176,4 +236,68 @@
       </table>
     </div>
   </section>
+
+  <script>
+    const weekStart = "{{ cockpit.week_start }}";
+    const generateExecutiveSummaryButton = document.getElementById("generate-executive-summary");
+    if (generateExecutiveSummaryButton) {
+      generateExecutiveSummaryButton.addEventListener("click", async () => {
+        const response = await fetch(`/api/portfolio/executive-summary/generate?week_start=${weekStart}`, { method: "POST" });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert("Failed to generate executive summary");
+        }
+      });
+    }
+
+    document.querySelectorAll(".executive-summary-action").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const draftId = button.dataset.draftId;
+        const action = button.dataset.action;
+        let options = { method: "POST" };
+        if (action === "accept") {
+          const override = document.getElementById("executive-summary-override");
+          const payload = {{ cockpit.executive_summary_draft.draft | tojson if cockpit.executive_summary_draft else 'null' }};
+          if (payload && override) {
+            payload.overall_status = override.value;
+            options = {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ final_payload: payload }),
+            };
+          }
+        }
+        const response = await fetch(`/api/portfolio/executive-summary/${draftId}/${action}`, options);
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert(`Failed to ${action} executive summary`);
+        }
+      });
+    });
+
+    const generateOutboundDraftsButton = document.getElementById("generate-outbound-drafts");
+    if (generateOutboundDraftsButton) {
+      generateOutboundDraftsButton.addEventListener("click", async () => {
+        const response = await fetch(`/api/outbound-drafts/generate?week_start=${weekStart}`, { method: "POST" });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert("Failed to generate outbound drafts");
+        }
+      });
+    }
+
+    document.querySelectorAll(".outbound-draft-action").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const response = await fetch(`/api/outbound-drafts/${button.dataset.draftId}/${button.dataset.action}`, { method: "POST" });
+        if (response.ok) {
+          window.location.reload();
+        } else {
+          alert(`Failed to ${button.dataset.action} outbound draft`);
+        }
+      });
+    });
+  </script>
 {% endblock %}

@@ -34,6 +34,7 @@ class Project(Base):
     risks: Mapped[list["RiskItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     decisions: Mapped[list["DecisionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     suggestions: Mapped[list["SuggestionItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
+    outbound_drafts: Mapped[list["OutboundDraft"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     resources: Mapped[list["ResourceItem"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     project_files: Mapped[list["ProjectFile"]] = relationship(back_populates="project", cascade="all, delete-orphan")
     upstream_dependencies: Mapped[list["ProjectDependency"]] = relationship(
@@ -299,3 +300,21 @@ class PortfolioSummaryDraft(Base):
     status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+
+
+class OutboundDraft(Base):
+    __tablename__ = "outbound_drafts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
+    week_start: Mapped[Optional[date]] = mapped_column(Date(), nullable=True, index=True)
+    draft_type: Mapped[str] = mapped_column(String(60), index=True)
+    audience_label: Mapped[str] = mapped_column(String(160))
+    title: Mapped[str] = mapped_column(String(300))
+    message_text: Mapped[str] = mapped_column(Text())
+    source_payload: Mapped[Optional[str]] = mapped_column(Text(), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), default=utcnow)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(), nullable=True)
+
+    project: Mapped[Optional["Project"]] = relationship(back_populates="outbound_drafts")

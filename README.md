@@ -47,6 +47,10 @@ python3 -m uvicorn pm_dashboard.main:app --reload
 
 Open `http://127.0.0.1:8000`.
 
+Automation workflow guide:
+
+- [`Docs/Automation Workflow.md`](/home/matthew_hudson/pm_dash/Docs/Automation%20Workflow.md)
+
 ## Configuration
 
 Primary environment variables:

@@ -9,6 +9,7 @@ from .models import (
     DecisionItem,
     ImportRun,
     Milestone,
+    OutboundDraft,
     Project,
     ProjectDependency,
     ProjectFile,
@@ -205,3 +206,23 @@ def list_overdue_dependencies(session, today: date | None = None):
         )
         .order_by(ProjectDependency.needed_by_date, ProjectDependency.id)
     ).all()
+
+
+def list_outbound_drafts(
+    session,
+    project_id: int | None = None,
+    week_start: date | None = None,
+    status: str | None = None,
+):
+    stmt = select(OutboundDraft)
+    if project_id is not None:
+        stmt = stmt.where(OutboundDraft.project_id == project_id)
+    if week_start is not None:
+        stmt = stmt.where(OutboundDraft.week_start == week_start)
+    if status is not None:
+        stmt = stmt.where(OutboundDraft.status == status)
+    return session.scalars(stmt.order_by(OutboundDraft.created_at.desc(), OutboundDraft.id.desc())).all()
+
+
+def get_outbound_draft(session, draft_id: int):
+    return session.get(OutboundDraft, draft_id)

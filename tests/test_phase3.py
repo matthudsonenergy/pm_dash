@@ -11,18 +11,23 @@ from pm_dashboard.services import (
     RiskCreate,
     WeeklyUpdateCreate,
     accept_portfolio_summary_draft,
+    accept_outbound_draft,
     attention_queue,
     create_decision,
     create_portfolio_summary_draft,
     create_risk,
     detect_resource_conflicts,
     dismiss_portfolio_summary_draft,
+    dismiss_outbound_draft,
+    generate_outbound_drafts,
     generate_portfolio_executive_summary,
+    get_outbound_draft_or_404,
     health_trend,
     import_schedule,
     leadership_surprise_indicator,
     portfolio_view,
     project_summary,
+    serialize_outbound_draft,
     upsert_weekly_update,
 )
 
@@ -684,6 +689,7 @@ def test_generate_portfolio_executive_summary_sections(app):
     assert isinstance(payload["top_3_risks"], list)
     assert isinstance(payload["decision_asks"], list)
     assert isinstance(payload["next_week_watchlist"], list)
+    assert payload["source_trace"]["projects_in_scope"] >= 1
 
 
 def test_accept_and_dismiss_portfolio_executive_summary_drafts(app):
@@ -706,4 +712,70 @@ def test_accept_and_dismiss_portfolio_executive_summary_drafts(app):
     assert accepted.status == "accepted"
     assert accepted.final_payload
     assert "PM final" in accepted.final_payload
+    assert dismissed.status == "dismissed"
+
+
+def test_generate_outbound_drafts_from_weekly_control_signals(app):
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "p2c").one()
+        upsert_weekly_update(
+            session,
+            project,
+            WeeklyUpdateCreate(
+                week_start=date(2026, 3, 23),
+                status_summary="Under pressure.",
+                blockers="Vendor permit unresolved",
+                approvals_needed="Approve recovery budget | owner: Matt | due: 2026-03-27",
+                follow_ups="Matt to send revised status by 2026-03-26",
+                confidence_note=None,
+                meeting_notes=None,
+                status_notes=None,
+            ),
+            settings=app.state.settings,
+        )
+        create_decision(
+            session,
+            project,
+            DecisionCreate(
+                summary="Approve recovery budget",
+                context="Needed this week",
+                owner="Matt",
+                due_date=date.today() - timedelta(days=1),
+                status="pending",
+                source="manual",
+            ),
+        )
+        drafts = generate_outbound_drafts(session, week_start=date(2026, 3, 23), settings=app.state.settings)
+
+    draft_types = {item["draft_type"] for item in drafts}
+    assert "approval_chase_note" in draft_types
+    assert "steering_preread_draft" in draft_types
+
+
+def test_accept_and_dismiss_outbound_drafts(app):
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "atlas").one()
+        upsert_weekly_update(
+            session,
+            project,
+            WeeklyUpdateCreate(
+                week_start=date(2026, 3, 23),
+                status_summary="Update pending.",
+                blockers=None,
+                approvals_needed="Send permit approval",
+                follow_ups=None,
+                confidence_note=None,
+                meeting_notes=None,
+                status_notes=None,
+            ),
+            settings=app.state.settings,
+        )
+        drafts = generate_outbound_drafts(session, week_start=date(2026, 3, 23), settings=app.state.settings, project_id=project.id)
+        accepted = accept_outbound_draft(session, get_outbound_draft_or_404(session, drafts[0]["id"]), message_text="PM-approved message")
+
+        refreshed = generate_outbound_drafts(session, week_start=date(2026, 3, 30), settings=app.state.settings, project_id=project.id)
+        dismissed = dismiss_outbound_draft(session, get_outbound_draft_or_404(session, refreshed[0]["id"]))
+
+    assert accepted.status == "accepted"
+    assert accepted.message_text == "PM-approved message"
     assert dismissed.status == "dismissed"

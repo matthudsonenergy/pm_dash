@@ -21,6 +21,7 @@ from .models import (
     DecisionItem,
     ImportRun,
     Milestone,
+    OutboundDraft,
     Project,
     ProjectDependency,
     ProjectFile,
@@ -42,6 +43,7 @@ from .projects import (
 from .repository import (
     get_decision,
     get_latest_snapshot,
+    get_outbound_draft,
     get_project,
     get_project_by_key,
     get_project_file,
@@ -58,6 +60,7 @@ from .repository import (
     list_dependencies,
     list_dependencies_for_project,
     list_import_runs,
+    list_outbound_drafts,
     list_milestones_for_snapshot,
     list_projects,
     list_risks,
@@ -161,6 +164,17 @@ class RefreshRunResult:
     import_run_id: Optional[int] = None
     project_file: Optional[dict] = None
     error: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class OutboundDraftCreate:
+    draft_type: str
+    audience_label: str
+    title: str
+    message_text: str
+    week_start: Optional[date] = None
+    project_id: Optional[int] = None
+    source_payload: Optional[dict] = None
 
 
 def ensure_storage(settings: Settings) -> None:
@@ -942,6 +956,23 @@ def serialize_portfolio_summary_draft(draft: PortfolioSummaryDraft) -> dict:
     }
 
 
+def serialize_outbound_draft(draft: OutboundDraft) -> dict:
+    return {
+        "id": draft.id,
+        "project_id": draft.project_id,
+        "project_name": draft.project.name if draft.project else None,
+        "week_start": draft.week_start.isoformat() if draft.week_start else None,
+        "draft_type": draft.draft_type,
+        "audience_label": draft.audience_label,
+        "title": draft.title,
+        "message_text": draft.message_text,
+        "source": _json_loads(draft.source_payload) if draft.source_payload else None,
+        "status": draft.status,
+        "created_at": draft.created_at.isoformat() if draft.created_at else None,
+        "reviewed_at": draft.reviewed_at.isoformat() if draft.reviewed_at else None,
+    }
+
+
 def refresh_status_for_project(
     session,
     project: Project,
@@ -1527,6 +1558,217 @@ def review_suggestions_batch(
     return reviewed
 
 
+def create_outbound_draft(session, payload: OutboundDraftCreate) -> OutboundDraft:
+    draft = OutboundDraft(
+        project_id=payload.project_id,
+        week_start=payload.week_start,
+        draft_type=payload.draft_type,
+        audience_label=payload.audience_label,
+        title=payload.title,
+        message_text=payload.message_text,
+        source_payload=_json_dumps(payload.source_payload) if payload.source_payload else None,
+        status="pending",
+    )
+    session.add(draft)
+    session.commit()
+    session.refresh(draft)
+    return draft
+
+
+def get_outbound_draft_or_404(session, draft_id: int) -> OutboundDraft:
+    draft = get_outbound_draft(session, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Outbound draft not found")
+    return draft
+
+
+def accept_outbound_draft(
+    session,
+    draft: OutboundDraft,
+    *,
+    title: Optional[str] = None,
+    message_text: Optional[str] = None,
+    audience_label: Optional[str] = None,
+) -> OutboundDraft:
+    if draft.status != "pending":
+        raise HTTPException(status_code=400, detail="Only pending outbound drafts can be accepted")
+    if title is not None:
+        draft.title = title
+    if message_text is not None:
+        draft.message_text = message_text
+    if audience_label is not None:
+        draft.audience_label = audience_label
+    draft.status = "accepted"
+    draft.reviewed_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(draft)
+    return draft
+
+
+def dismiss_outbound_draft(session, draft: OutboundDraft) -> OutboundDraft:
+    if draft.status != "pending":
+        raise HTTPException(status_code=400, detail="Only pending outbound drafts can be dismissed")
+    draft.status = "dismissed"
+    draft.reviewed_at = datetime.now(UTC)
+    session.commit()
+    session.refresh(draft)
+    return draft
+
+
+def generate_outbound_drafts(
+    session,
+    *,
+    week_start: date,
+    settings: Settings | None = None,
+    project_id: int | None = None,
+) -> list[dict]:
+    settings = settings or get_settings()
+    projects = [get_project_or_404(session, project_id)] if project_id is not None else list_projects(session)
+
+    for draft in list_outbound_drafts(session, project_id=project_id, week_start=week_start, status="pending"):
+        session.delete(draft)
+    session.commit()
+
+    generated: list[dict] = []
+    week_finish = week_end(week_start)
+    today = date.today()
+
+    for project in projects:
+        workflow = project_workflow_view(session, project, settings=settings, week_start=week_start)
+        summary = workflow["summary"]
+        weekly_update = workflow["weekly_update"]
+        actions = [action for action in list_actions(session, project.id, include_closed=False) if action.status != "done"]
+        overdue_actions = [action for action in actions if action.due_date and action.due_date < today]
+        approvals = split_lines(weekly_update["approvals_needed"] if weekly_update else None)
+        overdue_dependencies = [
+            item for item in list_dependencies_for_project(session, project.id, include_closed=False)
+            if item.needed_by_date and item.needed_by_date < today and is_open_dependency_status(item.status)
+        ]
+
+        if not weekly_update:
+            generated.append(
+                serialize_outbound_draft(
+                    create_outbound_draft(
+                        session,
+                        OutboundDraftCreate(
+                            project_id=project.id,
+                            week_start=week_start,
+                            draft_type="missing_weekly_update_prompt",
+                            audience_label="Project owner",
+                            title=f"Request weekly update for {project.name}",
+                            message_text=(
+                                f"Please submit the weekly update for {project.name} for the week of {week_start.isoformat()}. "
+                                "The cockpit is currently missing your status, blockers, approvals needed, and follow-ups."
+                            ),
+                            source_payload={"project_id": project.id, "week_start": week_start.isoformat()},
+                        ),
+                    )
+                )
+            )
+
+        if overdue_actions:
+            generated.append(
+                serialize_outbound_draft(
+                    create_outbound_draft(
+                        session,
+                        OutboundDraftCreate(
+                            project_id=project.id,
+                            week_start=week_start,
+                            draft_type="overdue_action_reminder",
+                            audience_label="Project owners",
+                            title=f"Chase overdue actions for {project.name}",
+                            message_text=(
+                                f"{project.name} has {len(overdue_actions)} overdue action(s): "
+                                + "; ".join(f"{action.title} (owner: {action.owner})" for action in overdue_actions[:4])
+                                + ". Please confirm recovery dates before the next review."
+                            ),
+                            source_payload={
+                                "project_id": project.id,
+                                "action_ids": [action.id for action in overdue_actions],
+                            },
+                        ),
+                    )
+                )
+            )
+
+        if approvals:
+            generated.append(
+                serialize_outbound_draft(
+                    create_outbound_draft(
+                        session,
+                        OutboundDraftCreate(
+                            project_id=project.id,
+                            week_start=week_start,
+                            draft_type="approval_chase_note",
+                            audience_label="Approvers",
+                            title=f"Approval chase note for {project.name}",
+                            message_text=(
+                                f"Approvals are still needed for {project.name}: "
+                                + "; ".join(approvals[:4])
+                                + ". Please respond before "
+                                + week_finish.isoformat()
+                                + "."
+                            ),
+                            source_payload={"project_id": project.id, "approvals_needed": approvals[:4]},
+                        ),
+                    )
+                )
+            )
+
+        if overdue_dependencies:
+            generated.append(
+                serialize_outbound_draft(
+                    create_outbound_draft(
+                        session,
+                        OutboundDraftCreate(
+                            project_id=project.id,
+                            week_start=week_start,
+                            draft_type="dependency_chase_note",
+                            audience_label="Dependency owners",
+                            title=f"Dependency chase note for {project.name}",
+                            message_text=(
+                                f"{project.name} has {len(overdue_dependencies)} overdue cross-project dependency(ies): "
+                                + "; ".join(
+                                    f"{item.upstream_project.name if item.upstream_project else 'Unknown'}:{item.upstream_task_ref}"
+                                    for item in overdue_dependencies[:4]
+                                )
+                                + ". Please confirm the unblock path and revised dates."
+                            ),
+                            source_payload={
+                                "project_id": project.id,
+                                "dependency_ids": [item.id for item in overdue_dependencies],
+                            },
+                        ),
+                    )
+                )
+            )
+
+        if summary["worsening_risks_count"] or summary["overdue_decisions_count"]:
+            generated.append(
+                serialize_outbound_draft(
+                    create_outbound_draft(
+                        session,
+                        OutboundDraftCreate(
+                            project_id=project.id,
+                            week_start=week_start,
+                            draft_type="steering_preread_draft",
+                            audience_label="Steering committee",
+                            title=f"Steering pre-read for {project.name}",
+                            message_text=(
+                                f"{project.name} pre-read for week {week_start.isoformat()}: "
+                                f"{summary['attention_explainer']['summary']}. "
+                                f"Decision pressure: {summary['overdue_decisions_count']} overdue decision(s). "
+                                f"Risk pressure: {summary['worsening_risks_count']} worsening risk(s)."
+                            ),
+                            source_payload={"project_id": project.id, "attention_summary": summary["attention_explainer"]["summary"]},
+                        ),
+                    )
+                )
+            )
+
+    return generated
+
+
 def group_suggestions(suggestions: list[dict]) -> list[dict]:
     order = ["action", "risk", "decision", "summary", "reminder"]
     grouped: list[dict] = []
@@ -1733,7 +1975,7 @@ def project_health_history(
         if not weekly_update:
             continue
         week_finish = week_end(week_start)
-        week_finish_dt = datetime.combine(week_finish, datetime.max.time(), tzinfo=UTC)
+        week_finish_dt = datetime.combine(week_finish, datetime.max.time())
 
         snapshot = None
         for candidate in snapshots:
@@ -2165,6 +2407,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
     total_material_slips = 0
     refresh_summary = refresh_status_summary(session, settings=settings, today=today)
     exception_queue = attention_queue(session, settings=settings, today=today)
+    outbound_drafts = [serialize_outbound_draft(item) for item in list_outbound_drafts(session, week_start=selected_week, status="pending")]
 
     for project in projects:
         summary = project_summary(session, project, settings=settings, today=today)
@@ -2250,6 +2493,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
         "review_queue": sorted(review_queue, key=lambda item: (item["suggestion_type"], item["project_id"])),
         "review_groups": {
             "suggestions": sorted(review_queue, key=lambda item: (item["suggestion_type"], item["project_id"])),
+            "outbound_drafts": outbound_drafts,
             "data_freshness": [item for item in exception_queue if item["category"] in {"Stale Plan", "Missing Weekly Update"}],
             "exceptions": [item for item in exception_queue if item["category"] not in {"Stale Plan", "Missing Weekly Update"}][:12],
         },
@@ -2258,6 +2502,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
         "decisions_to_force": sorted(decisions_to_force, key=lambda item: item["due_date"] or ""),
         "risks_watch": sorted(risks_watch, key=lambda item: (severity_rank(item["severity"]), item["title"])),
         "reminders": reminders,
+        "outbound_drafts": outbound_drafts,
         "portfolio_summary": portfolio_summary,
         "refresh_summary": refresh_summary,
         "deteriorating_projects": deteriorating,
@@ -2323,6 +2568,14 @@ def generate_portfolio_executive_summary(
             f"{risk.project.name}: {risk.title}"
             for risk in next_week_watchlist
         ],
+        "source_trace": {
+            "updates_received": sum(1 for row in week_data["project_rows"] if row["weekly_update"]),
+            "projects_in_scope": len(week_data["project_rows"]),
+            "material_slips": sum(row["summary"]["material_slips_count"] for row in week_data["project_rows"]),
+            "overdue_actions": len(week_data["overdue_actions"]),
+            "decision_asks_count": len(decision_asks),
+            "watchlist_count": len(next_week_watchlist),
+        },
     }
     return payload
 
