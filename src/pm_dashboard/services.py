@@ -1558,6 +1558,137 @@ def group_suggestions(suggestions: list[dict]) -> list[dict]:
     return grouped
 
 
+def _attention_reason(
+    *,
+    category: str,
+    detail: str,
+    score: int,
+    target_url: str,
+    source_type: str = "project",
+    source_id: Optional[int] = None,
+    dedupe_key: Optional[str] = None,
+) -> dict:
+    return {
+        "category": category,
+        "detail": detail,
+        "score": score,
+        "target_url": target_url,
+        "source_type": source_type,
+        "source_id": source_id,
+        "dedupe_key": dedupe_key or f"{category}:{source_id or target_url}",
+    }
+
+
+def build_project_attention_explainer(summary: dict) -> dict:
+    project_id = summary["project_id"]
+    reasons: list[dict] = []
+    refresh_status = summary["refresh_status"]
+
+    if refresh_status["state"] != "fresh":
+        reasons.append(
+            _attention_reason(
+                category="Data Freshness",
+                detail=refresh_status["label"],
+                score=12 if refresh_status["state"] == "stale" else 9,
+                target_url="/admin/imports" if refresh_status["eligible"] else f"/projects/{project_id}",
+                source_id=project_id,
+            )
+        )
+
+    if summary["missing_weekly_update"]:
+        reasons.append(
+            _attention_reason(
+                category="Weekly Update",
+                detail="This week is missing a project update",
+                score=9,
+                target_url=f"/projects/{project_id}/workflow",
+                source_id=project_id,
+            )
+        )
+
+    if summary["material_slips_count"]:
+        reasons.append(
+            _attention_reason(
+                category="Schedule",
+                detail=f"{summary['material_slips_count']} material milestone slip(s) detected",
+                score=max(10, summary["material_slips_count"] * 5),
+                target_url=f"/projects/{project_id}",
+                source_id=project_id,
+            )
+        )
+
+    if summary["overdue_dependencies_count"]:
+        reasons.append(
+            _attention_reason(
+                category="Dependencies",
+                detail=f"{summary['overdue_dependencies_count']} dependency(ies) are overdue",
+                score=max(8, summary["overdue_dependencies_count"] * 5),
+                target_url=f"/dependencies?project_id={project_id}",
+                source_id=project_id,
+            )
+        )
+
+    if summary["overdue_actions_count"]:
+        reasons.append(
+            _attention_reason(
+                category="Actions",
+                detail=f"{summary['overdue_actions_count']} action(s) are overdue",
+                score=max(6, summary["overdue_actions_count"] * 4),
+                target_url=f"/projects/{project_id}/workflow",
+                source_id=project_id,
+            )
+        )
+
+    if summary["worsening_risks_count"]:
+        reasons.append(
+            _attention_reason(
+                category="Risks",
+                detail=f"{summary['worsening_risks_count']} risk(s) are worsening",
+                score=max(5, summary["worsening_risks_count"] * 5),
+                target_url=f"/projects/{project_id}/workflow",
+                source_id=project_id,
+            )
+        )
+
+    if summary["overdue_decisions_count"]:
+        reasons.append(
+            _attention_reason(
+                category="Decisions",
+                detail=f"{summary['overdue_decisions_count']} decision(s) need forcing",
+                score=max(5, summary["overdue_decisions_count"] * 5),
+                target_url=f"/projects/{project_id}/workflow",
+                source_id=project_id,
+            )
+        )
+
+    if summary["leadership_surprise_indicator"]["level"] in {"high", "medium"}:
+        reasons.append(
+            _attention_reason(
+                category="Leadership Surprise",
+                detail="; ".join(summary["leadership_surprise_indicator"]["drivers"][:2]) or "Leadership surprise risk is elevated",
+                score=summary["leadership_surprise_indicator"]["score"],
+                target_url=f"/projects/{project_id}",
+                source_id=project_id,
+            )
+        )
+
+    reasons = sorted(reasons, key=lambda item: item["score"], reverse=True)
+    primary = reasons[0] if reasons else _attention_reason(
+        category="Stable",
+        detail="No immediate exception signals are elevated",
+        score=0,
+        target_url=f"/projects/{project_id}",
+        source_id=project_id,
+    )
+    summary_text = " | ".join(reason["detail"] for reason in reasons[:3]) if reasons else "Stable"
+    return {
+        "headline": primary["category"],
+        "summary": summary_text,
+        "reasons": reasons[:4],
+        "target_url": primary["target_url"],
+    }
+
+
 def _health_score(
     *,
     material_slips: int,
@@ -1741,6 +1872,8 @@ def project_summary(
         for decision in list_decisions(session, project.id, include_closed=False)
         if decision.status not in {"done", "closed"}
     ]
+    worsening_risks = [risk for risk in open_risks if risk.trend == "worsening"]
+    overdue_decisions = [decision for decision in open_decisions if decision.due_date and decision.due_date <= today]
     current_update = get_weekly_update(session, project.id, current_week_start(today))
     overdue_dependencies_count = len(
         [
@@ -1764,8 +1897,8 @@ def project_summary(
         stale_plan=stale_plan,
         upcoming_milestones=upcoming_milestones,
     )
-    attention += len([risk for risk in open_risks if risk.trend == "worsening"]) * 3
-    attention += len([decision for decision in open_decisions if decision.due_date and decision.due_date <= today]) * 4
+    attention += len(worsening_risks) * 3
+    attention += len(overdue_decisions) * 4
     if not current_update:
         attention += 6
 
@@ -1773,7 +1906,7 @@ def project_summary(
     trend = health_trend(session, project.id, window_weeks=4, settings=settings, today=today)
     leadership_surprise = leadership_surprise_indicator(project, today=today, settings=settings)
 
-    return {
+    summary = {
         "project_id": project.id,
         "project_key": project.key,
         "project_name": project.name,
@@ -1785,6 +1918,8 @@ def project_summary(
         "overdue_actions_count": len(overdue_actions),
         "overdue_dependencies_count": overdue_dependencies_count,
         "open_decisions_count": len(open_decisions),
+        "overdue_decisions_count": len(overdue_decisions),
+        "worsening_risks_count": len(worsening_risks),
         "recent_schedule_movement": recent_schedule_movement,
         "needs_pm_attention_score": attention,
         "stale_plan": stale_plan,
@@ -1808,6 +1943,8 @@ def project_summary(
         "leadership_surprise_indicator": leadership_surprise,
         "refresh_status": refresh_status,
     }
+    summary["attention_explainer"] = build_project_attention_explainer(summary)
+    return summary
 
 
 def portfolio_view(
@@ -2027,6 +2164,7 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
     reminders = []
     total_material_slips = 0
     refresh_summary = refresh_status_summary(session, settings=settings, today=today)
+    exception_queue = attention_queue(session, settings=settings, today=today)
 
     for project in projects:
         summary = project_summary(session, project, settings=settings, today=today)
@@ -2110,6 +2248,11 @@ def cockpit_view(session, settings: Settings | None = None, week_start: Optional
         "week_end": selected_week_end.isoformat(),
         "project_rows": project_rows,
         "review_queue": sorted(review_queue, key=lambda item: (item["suggestion_type"], item["project_id"])),
+        "review_groups": {
+            "suggestions": sorted(review_queue, key=lambda item: (item["suggestion_type"], item["project_id"])),
+            "data_freshness": [item for item in exception_queue if item["category"] in {"Stale Plan", "Missing Weekly Update"}],
+            "exceptions": [item for item in exception_queue if item["category"] not in {"Stale Plan", "Missing Weekly Update"}][:12],
+        },
         "actions_due_this_week": sorted(all_due_actions, key=lambda item: item["due_date"] or ""),
         "overdue_actions": sorted(overdue_actions, key=lambda item: item["due_date"] or ""),
         "decisions_to_force": sorted(decisions_to_force, key=lambda item: item["due_date"] or ""),
@@ -2262,50 +2405,75 @@ def attention_queue(session, settings: Settings | None = None, today: Optional[d
         if leadership_surprise["level"] == "high":
             queue.append(
                 {
+                    "id": f"leadership-surprise-{summary['project_id']}",
                     "project_name": summary["project_name"],
                     "category": "Leadership Surprise Risk",
                     "detail": "; ".join(leadership_surprise["drivers"][:2]),
                     "score": leadership_surprise["score"],
+                    "target_url": f"/projects/{summary['project_id']}",
+                    "source_type": "project",
+                    "source_id": summary["project_id"],
+                    "dedupe_key": f"leadership-surprise:{summary['project_id']}",
                 }
             )
 
         if summary["stale_plan"]:
             queue.append(
                 {
+                    "id": f"stale-plan-{summary['project_id']}",
                     "project_name": summary["project_name"],
                     "category": "Stale Plan",
                     "detail": "Latest successful import is older than 7 days or missing",
                     "score": 12,
+                    "target_url": "/admin/imports" if summary["refresh_status"]["eligible"] else f"/projects/{summary['project_id']}",
+                    "source_type": "project",
+                    "source_id": summary["project_id"],
+                    "dedupe_key": f"stale-plan:{summary['project_id']}",
                 }
             )
 
         if summary["missing_weekly_update"]:
             queue.append(
                 {
+                    "id": f"missing-weekly-update-{summary['project_id']}",
                     "project_name": summary["project_name"],
                     "category": "Missing Weekly Update",
                     "detail": f"No weekly update captured for {current_week.isoformat()}",
                     "score": 9,
+                    "target_url": f"/projects/{summary['project_id']}/workflow",
+                    "source_type": "weekly_update",
+                    "source_id": summary["project_id"],
+                    "dedupe_key": f"missing-weekly-update:{summary['project_id']}",
                 }
             )
 
         if summary["overdue_actions_count"]:
             queue.append(
                 {
+                    "id": f"overdue-actions-{summary['project_id']}",
                     "project_name": summary["project_name"],
                     "category": "Overdue Actions",
                     "detail": f"{summary['overdue_actions_count']} action(s) overdue",
                     "score": summary["overdue_actions_count"] * 4,
+                    "target_url": f"/projects/{summary['project_id']}/workflow",
+                    "source_type": "action",
+                    "source_id": summary["project_id"],
+                    "dedupe_key": f"overdue-actions:{summary['project_id']}",
                 }
             )
 
         if summary["overdue_dependencies_count"]:
             queue.append(
                 {
+                    "id": f"blocked-dependencies-{summary['project_id']}",
                     "project_name": summary["project_name"],
                     "category": "Blocked Cross-Project Dependencies",
                     "detail": f"{summary['overdue_dependencies_count']} dependency(ies) overdue",
                     "score": summary["overdue_dependencies_count"] * 5,
+                    "target_url": f"/dependencies?project_id={summary['project_id']}",
+                    "source_type": "dependency",
+                    "source_id": summary["project_id"],
+                    "dedupe_key": f"blocked-dependencies:{summary['project_id']}",
                 }
             )
 
@@ -2319,10 +2487,15 @@ def attention_queue(session, settings: Settings | None = None, today: Optional[d
             if overdue_decisions:
                 queue.append(
                     {
+                        "id": f"overdue-decisions-{project.id}",
                         "project_name": project.name,
                         "category": "Overdue Decisions",
                         "detail": f"{len(overdue_decisions)} decision(s) need forcing",
                         "score": len(overdue_decisions) * 5,
+                        "target_url": f"/projects/{project.id}/workflow",
+                        "source_type": "decision",
+                        "source_id": project.id,
+                        "dedupe_key": f"overdue-decisions:{project.id}",
                     }
                 )
 
@@ -2332,10 +2505,15 @@ def attention_queue(session, settings: Settings | None = None, today: Optional[d
             if worsening_risks:
                 queue.append(
                     {
+                        "id": f"worsening-risks-{project.id}",
                         "project_name": project.name,
                         "category": "Worsening Risks",
                         "detail": f"{len(worsening_risks)} risk(s) marked worsening",
                         "score": len(worsening_risks) * 5,
+                        "target_url": f"/projects/{project.id}/workflow",
+                        "source_type": "risk",
+                        "source_id": project.id,
+                        "dedupe_key": f"worsening-risks:{project.id}",
                     }
                 )
 
@@ -2347,19 +2525,29 @@ def attention_queue(session, settings: Settings | None = None, today: Optional[d
             if milestone.finish_date and 0 <= (milestone.finish_date - today).days <= settings.upcoming_milestone_days:
                 queue.append(
                     {
+                        "id": f"upcoming-milestone-{project.id}-{milestone.id}",
                         "project_name": project.name,
                         "category": "Upcoming Milestone",
                         "detail": f"{milestone.name} due {milestone.finish_date.isoformat()}",
                         "score": 3,
+                        "target_url": f"/projects/{project.id}",
+                        "source_type": "milestone",
+                        "source_id": milestone.id,
+                        "dedupe_key": f"upcoming-milestone:{project.id}:{milestone.id}",
                     }
                 )
             if milestone.material_slip:
                 queue.append(
                     {
+                        "id": f"material-slip-{project.id}-{milestone.id}",
                         "project_name": project.name,
                         "category": "Material Slip",
                         "detail": f"{milestone.name} slipped by {milestone.variance_from_previous_days or milestone.variance_from_baseline_days} working day(s)",
                         "score": 10,
+                        "target_url": f"/projects/{project.id}",
+                        "source_type": "milestone",
+                        "source_id": milestone.id,
+                        "dedupe_key": f"material-slip:{project.id}:{milestone.id}",
                     }
                 )
 

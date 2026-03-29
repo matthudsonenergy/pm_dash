@@ -5,6 +5,7 @@
     <div>
       <p class="eyebrow">Attention Queue</p>
       <h2>What needs intervention this week.</h2>
+      <p class="subtle">The queue now carries a direct next-action link for each exception.</p>
     </div>
   </section>
 
@@ -17,6 +18,7 @@
             <th>Category</th>
             <th>Detail</th>
             <th>Priority</th>
+            <th>Next action</th>
           </tr>
         </thead>
         <tbody>
@@ -26,9 +28,10 @@
               <td>{{ item.category }}</td>
               <td>{{ item.detail }}</td>
               <td>{{ item.score }}</td>
+              <td><a href="{{ item.target_url }}">Open</a></td>
             </tr>
           {% else %}
-            <tr><td colspan="4">No active exceptions yet.</td></tr>
+            <tr><td colspan="5">No active exceptions yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

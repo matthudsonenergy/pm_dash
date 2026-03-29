@@ -150,6 +150,15 @@
             </div>
           </dl>
           <div class="metric-block">
+            <p class="mini-label">Why Now</p>
+            <p class="helper">{{ project.attention_explainer.summary }}</p>
+            <div class="tag-row tag-row-tight">
+              {% for reason in project.attention_explainer.reasons[:3] %}
+                <span class="tag">{{ reason.category }}</span>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="metric-block">
             <p class="mini-label">Refresh signal</p>
             <p class="helper">
               {{ project.refresh_status.label }}
@@ -170,6 +179,7 @@
           </div>
           <div class="detail-actions">
             <a class="hero-link" href="/projects/{{ project.project_id }}">Open project page</a>
+            <a class="hero-link hero-link-secondary" href="{{ project.attention_explainer.target_url }}">Open next action</a>
           </div>
         </div>
       </details>

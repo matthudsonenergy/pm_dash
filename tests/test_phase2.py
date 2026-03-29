@@ -274,6 +274,7 @@ def test_attention_queue_includes_phase2_signals(app):
     assert "Missing Weekly Update" in categories
     assert "Overdue Decisions" in categories
     assert "Worsening Risks" in categories
+    assert all(item["target_url"] for item in queue)
 
 
 def test_refresh_saved_projects_updates_freshness(monkeypatch, app):
@@ -324,3 +325,29 @@ def test_batch_review_accepts_selected_suggestions(app):
     assert len(reviewed) == 2
     assert all(item["status"] == "accepted" for item in reviewed)
     assert any(group["label"] == "Action" for group in group_suggestions(workflow["suggestions"]))
+
+
+def test_cockpit_exposes_grouped_review_queues_and_attention_explainer(app):
+    with app.state.session_factory() as session:
+        project = session.query(Project).filter(Project.key == "p2c").one()
+        upsert_weekly_update(
+            session,
+            project,
+            WeeklyUpdateCreate(
+                week_start=date(2026, 3, 24),
+                status_summary="Status under pressure.",
+                blockers="Vendor approval missing",
+                approvals_needed=None,
+                follow_ups="Matt to send weekly status by 2026-03-28",
+                confidence_note=None,
+                meeting_notes=None,
+                status_notes="Risk: startup checklist may slip again",
+            ),
+            settings=app.state.settings,
+        )
+        cockpit = cockpit_view(session, settings=app.state.settings, week_start=date(2026, 3, 24))
+
+    assert "suggestions" in cockpit["review_groups"]
+    assert "data_freshness" in cockpit["review_groups"]
+    assert "exceptions" in cockpit["review_groups"]
+    assert cockpit["project_rows"][0]["summary"]["attention_explainer"]["summary"]

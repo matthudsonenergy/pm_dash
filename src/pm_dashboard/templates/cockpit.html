@@ -75,6 +75,13 @@
   <section class="two-up">
     <article class="panel">
       <h3>Review Queue</h3>
+      <div class="signal-grid">
+        <div><strong>{{ cockpit.review_groups.suggestions|length }}</strong><span>Suggestion reviews</span></div>
+        <div><strong>{{ cockpit.review_groups.data_freshness|length }}</strong><span>Freshness gaps</span></div>
+        <div><strong>{{ cockpit.review_groups.exceptions|length }}</strong><span>Exception items</span></div>
+        <div><strong>{{ cockpit.reminders|length }}</strong><span>Reminder drafts</span></div>
+      </div>
+      <h4>Pending Suggestions</h4>
       <div class="table-wrap">
         <table>
           <thead>
@@ -99,6 +106,22 @@
           </tbody>
         </table>
       </div>
+      <h4>Freshness Gaps</h4>
+      <ul class="simple-list">
+        {% for item in cockpit.review_groups.data_freshness %}
+          <li><a href="{{ item.target_url }}">{{ item.project_name }}:</a> {{ item.detail }}</li>
+        {% else %}
+          <li>No freshness gaps.</li>
+        {% endfor %}
+      </ul>
+      <h4>Top Exceptions</h4>
+      <ul class="simple-list">
+        {% for item in cockpit.review_groups.exceptions[:6] %}
+          <li><a href="{{ item.target_url }}">{{ item.project_name }}:</a> {{ item.category }} | {{ item.detail }}</li>
+        {% else %}
+          <li>No elevated exceptions.</li>
+        {% endfor %}
+      </ul>
     </article>
 
     <article class="panel">
@@ -145,6 +168,7 @@
               <td>
                 <div>{{ row.summary_draft or "No draft yet" }}</div>
                 <div class="helper">Refresh: {{ row.refresh_status.label }}</div>
+                <div class="helper">Why now: {{ row.summary.attention_explainer.summary }}</div>
               </td>
             </tr>
           {% endfor %}
